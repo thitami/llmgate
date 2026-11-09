@@ -13,7 +13,7 @@ It has three pieces that work together:
 Needs Python 3.10+. Run everything from the repo root.
 
 ```
-python -m unittest discover -s tests -t . -v     # 69 tests
+python -m unittest discover -s tests -t . -v     # 87 tests
 python -m llmgate demo                            # offline demo, writes demo_out/dashboard.html
 python -m llmgate eval                            # passes, exit 0
 python -m llmgate eval --config config.regressed.json   # score 1.0 -> 0.5, exit 1
@@ -115,11 +115,18 @@ The breaker fixes the typical request. The timeout bounds what the first few req
 
 The page shows, per provider: uptime over 24 hours, 7 days and 30 days, p50/p95 latency of successful probes, a strip of every check over the last week, and failures grouped by kind (rate limited, 5xx, timeout, auth, and so on). Raw data is published next to the page as `probes.jsonl`, so anyone can check the numbers.
 
+It is also built to be followed:
+
+- **Incidents as GitHub issues.** When a provider fails 2 probes in a row, the workflow opens an issue labelled `incident`. When it passes 2 in a row, it comments with the duration and closes the issue. Watch the repo to get notified; the closed issues are the incident history.
+- **Badges.** Each provider has a [shields.io endpoint badge](https://shields.io/badges/endpoint-badge) showing 7-day uptime, e.g. `![gemini](https://img.shields.io/endpoint?url=https://<you>.github.io/llmgate/badges/gemini-3-8-flash.json)`. The page lists the snippet for every provider.
+- **Feed and data.** `feed.xml` (Atom) lists incidents, `status.json` has the current numbers, and `probes.jsonl` has every probe ever run.
+
 Run it locally:
 
 ```
 python -m llmgate probe --config config.status.json --out status/probes.jsonl
-python -m llmgate status-page --data status/probes.jsonl --out site/index.html
+python -m llmgate status-page --data status/probes.jsonl --out-dir site
+python -m llmgate incidents-sync --data status/probes.jsonl --repo you/llmgate --dry-run
 ```
 
 Set it up on GitHub:
@@ -141,6 +148,8 @@ config.regressed.json   same, but cheap-mock answers two cases wrong
 config.example.json     real-provider template (prices and models to fill in)
 config.free.json        Groq + Gemini free tiers + local Ollama, OpenAI + Anthropic optional
 config.status.json      providers probed by the status board
+llmgate/incidents.py    incident detection, badges, feed, status.json
+llmgate/github_issues.py  mirrors incidents as GitHub issues
 scripts/status-data.sh  keeps probe history on the status-data branch
 .github/workflows/eval.yml      unit tests + eval gate on pull requests
 .github/workflows/status.yml    probes every 2 hours, publishes the status page

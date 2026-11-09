@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -20,14 +21,41 @@ def run(argv):
 
 
 class CliTests(unittest.TestCase):
-    def test_status_page_creates_output_folder(self):
+    def test_status_page_writes_the_whole_site(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = os.path.join(tmp, "probes.jsonl")
-            open(data, "w").close()
-            out = os.path.join(tmp, "new", "dir", "index.html")
-            code, _, _ = run(["status-page", "--data", data, "--out", out])
+            with open(data, "w") as fh:
+                for i, ok in enumerate([True, False, False]):
+                    fh.write(json.dumps({"ts": "x", "t": 1_800_000_000 + i * 7200,
+                                         "provider": "p one", "model": "m", "ok": ok,
+                                         "kind": None if ok else "timeout",
+                                         "status": None, "latency_ms": 100.0,
+                                         "tokens_in": 1, "tokens_out": 1,
+                                         "correct": True if ok else None,
+                                         "error": None if ok else "t/o"}) + "\n")
+            out = os.path.join(tmp, "new", "site")
+            code, _, _ = run(["status-page", "--data", data, "--out-dir", out,
+                              "--site-url", "https://e.x/s/"])
             self.assertEqual(code, 0)
-            self.assertTrue(os.path.exists(out))
+            for name in ("index.html", "status.json", "feed.xml", "probes.jsonl",
+                         os.path.join("badges", "p-one.json")):
+                self.assertTrue(os.path.exists(os.path.join(out, name)), name)
+            with open(os.path.join(out, "status.json")) as fh:
+                st = json.load(fh)
+            self.assertTrue(st["providers"]["p one"]["open_incident"])
+
+    def test_incidents_sync_dry_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = os.path.join(tmp, "probes.jsonl")
+            with open(data, "w") as fh:
+                for i in range(2):
+                    fh.write(json.dumps({"ts": "x", "t": 1_800_000_000 + i, "provider": "p",
+                                         "model": "m", "ok": False, "kind": "timeout",
+                                         "error": "t/o"}) + "\n")
+            code, out, _ = run(["incidents-sync", "--data", data, "--repo", "o/r",
+                                "--dry-run"])
+        self.assertEqual(code, 0)
+        self.assertIn("open issue: p is down", out)
 
     def test_dashboard_warns_on_missing_db(self):
         with tempfile.TemporaryDirectory() as tmp:

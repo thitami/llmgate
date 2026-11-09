@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write   # push probe history to the status-data branch
+  issues: write     # open and close incident issues
   pages: write
   id-token: write
 
@@ -44,12 +45,21 @@ jobs:
       - name: Save probe history
         run: scripts/status-data.sh save "$RUNNER_TEMP/status-data"
 
-      - name: Build status page
+      - name: Sync incident issues
+        # an API hiccup here must not stop the page from updating
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p site
-          cp "$RUNNER_TEMP/status-data/probes.jsonl" site/probes.jsonl
-          python -m llmgate status-page --data site/probes.jsonl --out site/index.html \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}"
+          python -m llmgate incidents-sync --data "$RUNNER_TEMP/status-data/probes.jsonl" \
+            --repo "${{ github.repository }}" \
+            --page-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+
+      - name: Build status site
+        run: |
+          python -m llmgate status-page --data "$RUNNER_TEMP/status-data/probes.jsonl" --out-dir site \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}" \
+            --site-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
 
       - uses: actions/configure-pages@v5
 

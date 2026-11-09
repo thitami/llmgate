@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import sys
+import time
 
 from . import dashboard as dash
 from . import evals
@@ -162,22 +163,45 @@ def cmd_probe(args):
 
 
 def cmd_status_page(args):
-    out_dir = os.path.dirname(args.out)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
     if not os.path.exists(args.data):
         print(f"warning: {args.data} does not exist; writing an empty page",
               file=sys.stderr)
-        records = []
-        page = status.render(records, title=args.title, repo_url=args.repo_url,
-                             slot_hours=args.slot_hours)
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(page)
-    else:
-        n = status.write_page(args.data, args.out, title=args.title,
-                              repo_url=args.repo_url, slot_hours=args.slot_hours)
-        print(f"status page from {n} probes written to {args.out}")
+    n = status.write_site(args.data, args.out_dir, title=args.title,
+                          repo_url=args.repo_url, site_url=args.site_url,
+                          slot_hours=args.slot_hours)
+    print(f"status site from {n} probes written to {args.out_dir}/ "
+          "(index.html, status.json, feed.xml, badges/)")
     return 0
+
+
+def cmd_incidents_sync(args):
+    from . import github_issues, incidents
+    records = status.load_records(args.data) if os.path.exists(args.data) else []
+    found = incidents.find_incidents(records)
+    if args.dry_run:
+        client = _DryRunClient()
+    else:
+        token = os.environ.get(args.token_env)
+        if not token:
+            raise ConfigError(f"env var {args.token_env} is not set")
+        client = github_issues.GitHubClient(args.repo, token)
+    try:
+        github_issues.sync(client, found, time.time(), status.KIND_LABELS,
+                           page_url=args.page_url, dry_run=args.dry_run)
+    except github_issues.GitHubError as exc:
+        print(f"github error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+class _DryRunClient:
+    """Pretends no incident issues are open, to preview what sync would open."""
+
+    def ensure_label(self):
+        pass
+
+    def open_issues(self):
+        return []
 
 
 def cmd_demo(args):
@@ -265,13 +289,25 @@ def build_parser():
     pr.add_argument("--out", default="status/probes.jsonl")
     pr.set_defaults(func=cmd_probe)
 
-    sp = sub.add_parser("status-page", help="build the public status page")
+    sp = sub.add_parser("status-page", help="build the public status site")
     sp.add_argument("--data", default="status/probes.jsonl")
-    sp.add_argument("--out", default="site/index.html")
+    sp.add_argument("--out-dir", default="site")
     sp.add_argument("--title", default="Free LLM API status")
     sp.add_argument("--repo-url", default=None)
+    sp.add_argument("--site-url", default=None,
+                    help="public URL of the site, for feed and badge links")
     sp.add_argument("--slot-hours", type=int, default=2)
     sp.set_defaults(func=cmd_status_page)
+
+    ins = sub.add_parser("incidents-sync",
+                         help="open/close GitHub issues to match status-board incidents")
+    ins.add_argument("--data", default="status/probes.jsonl")
+    ins.add_argument("--repo", required=True, help="owner/name")
+    ins.add_argument("--page-url", default=None)
+    ins.add_argument("--token-env", default="GITHUB_TOKEN")
+    ins.add_argument("--dry-run", action="store_true",
+                     help="print what would be opened, call nothing")
+    ins.set_defaults(func=cmd_incidents_sync)
 
     m = sub.add_parser("demo", help="offline demo of everything")
     m.add_argument("--config", default=DEFAULT_CONFIG)

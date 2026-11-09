@@ -12,6 +12,9 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+import os
+
+from . import incidents as inc
 from .dashboard import CSS as DASHBOARD_CSS
 from .dashboard import percentile
 from .providers import ProviderError
@@ -156,11 +159,22 @@ def _short_time(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%-d %b %H:%M UTC")
 
 
+def coverage(days):
+    """'3 days', '5 hours', 'under an hour': how much history a window really has."""
+    hours = days * 24
+    if hours < 1:
+        return "under an hour"
+    if days < 1:
+        n = int(hours)
+        return f"{n} hour{'s' if n != 1 else ''}"
+    n = int(days)
+    return f"{n} day{'s' if n != 1 else ''}"
+
+
 def _uptime_cell(label, value, window_days, days_of_data):
     note = ""
     if value is not None and days_of_data < window_days * 0.95:
-        n = max(1, round(days_of_data))
-        note = f'<div class="note">{n} day{"s" if n != 1 else ""} of data</div>'
+        note = f'<div class="note">{coverage(days_of_data)} of data</div>'
     return (f'<div class="num"><div class="label">{html.escape(label)}</div>'
             f'<div class="value">{html.escape(_pct(value))}</div>{note}</div>')
 
@@ -179,9 +193,9 @@ def headline(summaries):
             f"Least reliable: {worst_name} ({worst:.1%}).")
 
 
-def _badge(state, detail=""):
-    colour, symbol, label = STATES[state]
-    text = label + (f" ({detail})" if detail else "")
+def _badge(state, detail="", label=None):
+    colour, symbol, default = STATES[state]
+    text = (label or default) + (f" ({detail})" if detail else "")
     return (f'<span class="badge"><span class="dot" style="background:{colour}">'
             f'{symbol}</span>{html.escape(text)}</span>')
 
@@ -231,12 +245,14 @@ a{color:inherit}
 .headline{font-size:17px;font-weight:600;margin:4px 0 14px}
 table.text th,table.text td{text-align:left}
 table.text td.err{color:var(--ink2);word-break:break-word}
+.snippets code{font-size:12px;word-break:break-all}
 """
 
 
 def render(records, now=None, title="Free LLM API status", repo_url=None,
-           slot_hours=2, days=7, incidents=15):
+           slot_hours=2, days=7, incidents=15, site_url=None):
     now = time.time() if now is None else now
+    found = inc.find_incidents(records)
     by_provider = {}
     for r in sorted(records, key=lambda r: r["t"]):
         by_provider.setdefault(r["provider"], []).append(r)
@@ -310,7 +326,9 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
         "<p class=\"sub\" style=\"margin-top:6px\">Each bar is a "
         f"{slot_hours}-hour slot. Hover a bar for the result.</p>"
         f"<div class=\"cards\">{''.join(cards)}</div>"
-        "<h2>Recent failures</h2><table class=\"text\"><tr><th>Time</th>"
+        + _incidents_section(found, now, repo_url)
+        + _follow_section(summaries, site_url, repo_url)
+        + "<h2>Recent failures</h2><table class=\"text\"><tr><th>Time</th>"
         "<th>Provider</th><th>Kind</th><th>Error</th></tr>"
         f"{rows}</table>"
         "<h2>How this is measured</h2><ul class=\"method\">"
@@ -329,6 +347,78 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
         "<li>Latency is time to a complete response for a one-word answer, "
         "successful probes only.</li>"
         "</ul></main></body></html>")
+
+
+def _incidents_section(found, now, repo_url, limit=20):
+    rows = []
+    for i in found[::-1][:limit]:
+        state = (_badge("down", label="Ongoing") if i.ongoing
+                 else _badge("up", label="Resolved"))
+        ended = "" if i.ongoing else inc.fmt_time(i.end)
+        rows.append(
+            f"<tr><td>{html.escape(i.provider)}</td><td>{state}</td>"
+            f"<td>{html.escape(inc.fmt_time(i.start))}</td><td>{html.escape(ended)}</td>"
+            f"<td>{html.escape(inc.fmt_duration(i.duration(now)))}</td>"
+            f"<td>{html.escape(inc.describe_kinds(i.kinds, KIND_LABELS))}</td></tr>")
+    if not rows:
+        rows.append('<tr><td colspan="6" class="muted">No incidents yet.</td></tr>')
+    issues = (f' Each one is also a <a href="{html.escape(repo_url)}/issues?q=label%3Aincident">'
+              "GitHub issue</a>: watch the repo to get notified." if repo_url else "")
+    return ("<h2>Incidents</h2>"
+            f"<p class=\"sub\">An incident opens after {inc.OPEN_AFTER} failed probes "
+            f"in a row and closes after {inc.CLOSE_AFTER} successful ones.{issues}</p>"
+            "<table class=\"text\"><tr><th>Provider</th><th>State</th><th>Started</th>"
+            "<th>Ended</th><th>Duration</th><th>Failures</th></tr>"
+            + "".join(rows) + "</table>")
+
+
+def _follow_section(summaries, site_url, repo_url):
+    base = (site_url or "").rstrip("/") + "/" if site_url else ""
+    links = [f'<a href="{html.escape(base)}feed.xml">RSS / Atom feed</a> of incidents',
+             f'<a href="{html.escape(base)}status.json">status.json</a> for scripts',
+             f'<a href="{html.escape(base)}probes.jsonl">probes.jsonl</a>, every probe ever run']
+    snippets = []
+    if base:
+        for name in sorted(summaries):
+            url = f"{base}badges/{inc.slug(name)}.json"
+            md = (f"![{name}](https://img.shields.io/endpoint?url={url})")
+            snippets.append(f"<li><code>{html.escape(md)}</code></li>")
+    badge_html = ("<p class=\"method\">Embed a live uptime badge (Markdown):</p>"
+                  f"<ul class=\"method snippets\">{''.join(snippets)}</ul>"
+                  if snippets else "")
+    return ("<h2>Follow</h2><ul class=\"method\">"
+            + "".join(f"<li>{l}</li>" for l in links) + "</ul>" + badge_html)
+
+
+def write_site(data_path, out_dir, title="Free LLM API status", repo_url=None,
+               site_url=None, slot_hours=2, now=None):
+    """Write index.html, status.json, feed.xml, badges/*.json and probes.jsonl."""
+    now = time.time() if now is None else now
+    records = load_records(data_path) if os.path.exists(data_path) else []
+    os.makedirs(os.path.join(out_dir, "badges"), exist_ok=True)
+    page = render(records, now=now, title=title, repo_url=repo_url,
+                  slot_hours=slot_hours, site_url=site_url)
+    with open(os.path.join(out_dir, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write(page)
+
+    by_provider = {}
+    for r in sorted(records, key=lambda r: r["t"]):
+        by_provider.setdefault(r["provider"], []).append(r)
+    summaries = {n: provider_summary(rs, now) for n, rs in by_provider.items()}
+    found = inc.find_incidents(records)
+    inc.write_json(os.path.join(out_dir, "status.json"),
+                   inc.status_json(summaries, found, now))
+    for name, s in summaries.items():
+        inc.write_json(os.path.join(out_dir, "badges", f"{inc.slug(name)}.json"),
+                       inc.badge(name, s["up_7d"]))
+    with open(os.path.join(out_dir, "feed.xml"), "w", encoding="utf-8") as fh:
+        fh.write(inc.atom_feed(found, now, site_url, title, KIND_LABELS))
+    src = os.path.abspath(data_path)
+    dst = os.path.abspath(os.path.join(out_dir, "probes.jsonl"))
+    if records and src != dst:
+        with open(src, encoding="utf-8") as a, open(dst, "w", encoding="utf-8") as b:
+            b.write(a.read())
+    return len(records)
 
 
 def write_page(data_path, out_path, **kw):
