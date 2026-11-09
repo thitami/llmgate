@@ -131,7 +131,7 @@ python -m llmgate incidents-sync --data status/probes.jsonl --repo you/llmgate -
 
 Set it up on GitHub:
 
-1. Add repo secrets for the providers you want (Settings > Secrets and variables > Actions): `GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`. Each provider stays off until its secret exists. GitHub Models needs no secret: the workflow's `models: read` permission lets the built-in token call it. Use keys made only for the board, so probes don't share quota with your own testing.
+1. Add repo secrets for the providers you want (Settings > Secrets and variables > Actions): `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`. Each provider stays off until its secret exists. GitHub Models needs no secret: the workflow's `models: read` permission lets the built-in token call it. Use keys made only for the board, so probes don't share quota with your own testing.
 2. Settings > Pages > Source: **GitHub Actions**.
 3. Actions > status > **Run workflow** for the first probe. After that it runs on its own.
 

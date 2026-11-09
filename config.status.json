@@ -1,5 +1,5 @@
 {
-  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped until its key is set (a GitHub Actions secret, or exported locally). GitHub Models uses the workflow's built-in GITHUB_TOKEN (permission models: read), so it needs no secret. Mistral uses the -latest aliases, which Mistral can point at newer models. openrouter / gpt-oss-120b is the same model as groq / gpt-oss-120b, reached through an aggregator: check the :free ID still exists before adding the key. Prices are unused by the probe but required by the loader; Gemini and Groq values are list prices.",
+  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped until its key is set (a GitHub Actions secret, or exported locally). GitHub Models uses the workflow's built-in GITHUB_TOKEN (permission models: read), so it needs no secret. Gemma 4 31B is probed twice on purpose: direct from Google and through OpenRouter, to see what the middleman adds. OpenRouter's :free list changes often; check the IDs still exist (GET https://openrouter.ai/api/v1/models). Prices are unused by the probe but required by the loader; Gemini and Groq values are list prices.",
   "providers": [
     {
       "type": "openai",
@@ -94,12 +94,12 @@
     },
     {
       "type": "openai",
-      "name": "mistral / small",
-      "tier": "cheap",
+      "name": "gemini / gemma-4-31b",
+      "tier": "strong",
       "optional": true,
-      "model": "mistral-small-latest",
-      "api_key_env": "MISTRAL_API_KEY",
-      "base_url": "https://api.mistral.ai/v1",
+      "model": "gemma-4-31b-it",
+      "api_key_env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "max_tokens": 1024,
       "timeout": 30,
       "price_in": 0,
@@ -107,26 +107,26 @@
     },
     {
       "type": "openai",
-      "name": "mistral / large",
+      "name": "openrouter / gemma-4-31b",
       "tier": "strong",
       "optional": true,
-      "model": "mistral-large-latest",
-      "api_key_env": "MISTRAL_API_KEY",
-      "base_url": "https://api.mistral.ai/v1",
-      "max_tokens": 1024,
-      "timeout": 30,
-      "price_in": 0,
-      "price_out": 0
-    },
-    {
-      "type": "openai",
-      "name": "openrouter / gpt-oss-120b",
-      "tier": "strong",
-      "optional": true,
-      "model": "openai/gpt-oss-120b:free",
+      "model": "google/gemma-4-31b-it:free",
       "api_key_env": "OPENROUTER_API_KEY",
       "base_url": "https://openrouter.ai/api/v1",
       "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0,
+      "price_out": 0
+    },
+    {
+      "type": "openai",
+      "name": "openrouter / nemotron-3-ultra",
+      "tier": "strong",
+      "optional": true,
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "base_url": "https://openrouter.ai/api/v1",
+      "max_tokens": 4096,
       "timeout": 30,
       "price_in": 0,
       "price_out": 0
