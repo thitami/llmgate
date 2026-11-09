@@ -1,0 +1,9 @@
+{
+  "cases": {
+    "arithmetic": true,
+    "capital": true,
+    "extract-year": true,
+    "short-summary": true
+  },
+  "score": 1.0
+}

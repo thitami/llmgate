@@ -1,0 +1,36 @@
+{
+  "_note": "Prices are per 1M tokens. Fill them in from each provider's pricing page; the loader refuses null. Model names are placeholders too. Real adapters are untested against live APIs.",
+  "daily_budget": 5.0,
+  "retries": 1,
+  "db": "llmgate.db",
+  "providers": [
+    {
+      "type": "anthropic",
+      "name": "anthropic-cheap",
+      "tier": "cheap",
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "price_in": null,
+      "price_out": null
+    },
+    {
+      "type": "anthropic",
+      "name": "anthropic-strong",
+      "tier": "strong",
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "price_in": null,
+      "price_out": null
+    },
+    {
+      "type": "openai",
+      "name": "openai-compat-cheap",
+      "tier": "cheap",
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1",
+      "price_in": null,
+      "price_out": null
+    }
+  ]
+}

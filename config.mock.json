@@ -1,0 +1,45 @@
+{
+  "_note": "Mock prices are arbitrary numbers per 1M tokens, not real prices.",
+  "daily_budget": 1.0,
+  "retries": 1,
+  "providers": [
+    {
+      "type": "mock",
+      "name": "cheap-mock",
+      "tier": "cheap",
+      "price_in": 20,
+      "price_out": 60,
+      "fail_rate": 0.0,
+      "seed": 1,
+      "latency_ms": 120,
+      "default": "I don't know.",
+      "answers": {
+        "2+2": "4",
+        "capital of france": "The capital of France is Paris.",
+        "summarise": "Gateway routes requests by tier, with fallback.",
+        "founding year": "1998",
+        "refund": "Refunds take five working days.",
+        "reset my password": "Use the reset link on the login page."
+      }
+    },
+    {
+      "type": "mock",
+      "name": "strong-mock",
+      "tier": "strong",
+      "price_in": 200,
+      "price_out": 600,
+      "fail_rate": 0.0,
+      "seed": 2,
+      "latency_ms": 400,
+      "default": "I don't know.",
+      "answers": {
+        "2+2": "4",
+        "capital of france": "The capital of France is Paris.",
+        "summarise": "Gateway routes requests by tier, with fallback.",
+        "founding year": "1998",
+        "refund": "Refunds take five working days.",
+        "reset my password": "Use the reset link on the login page."
+      }
+    }
+  ]
+}

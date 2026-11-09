@@ -1,0 +1,55 @@
+[
+  {
+    "id": "arithmetic",
+    "prompt": "What is 2+2? Reply with just the number.",
+    "tier": "cheap",
+    "checks": [
+      {
+        "type": "equals",
+        "value": "4"
+      }
+    ]
+  },
+  {
+    "id": "capital",
+    "prompt": "What is the capital of France?",
+    "tier": "cheap",
+    "checks": [
+      {
+        "type": "contains",
+        "value": "Paris"
+      },
+      {
+        "type": "not_contains",
+        "value": "London"
+      }
+    ]
+  },
+  {
+    "id": "short-summary",
+    "prompt": "Summarise in under ten words: The gateway routes requests to cheap or strong models and falls back on failure.",
+    "tier": "strong",
+    "checks": [
+      {
+        "type": "max_words",
+        "value": 10
+      },
+      {
+        "type": "contains",
+        "value": "fallback",
+        "ignore_case": true
+      }
+    ]
+  },
+  {
+    "id": "extract-year",
+    "prompt": "Extract the founding year from: Acme was founded in 1998 in Leeds.",
+    "tier": "strong",
+    "checks": [
+      {
+        "type": "regex",
+        "value": "^\\d{4}$"
+      }
+    ]
+  }
+]

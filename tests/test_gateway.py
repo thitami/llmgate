@@ -1,0 +1,270 @@
+import json
+import os
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from llmgate.gateway import AllProvidersFailed, BudgetExceeded, Gateway
+from llmgate.providers import ConfigError, build_provider, build_providers
+from llmgate.store import Store
+
+from .helpers import ScriptedProvider, boom, mock
+from llmgate.providers import ProviderError
+
+
+class _FakeAPI(BaseHTTPRequestHandler):
+    """Tiny local OpenAI-style server. Behaviour set by the class attribute."""
+    status = 200
+    seen_auth = []
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("content-length", 0)))
+        type(self).seen_auth.append(self.headers.get("authorization"))
+        if self.status != 200:
+            self.send_response(self.status)
+            self.end_headers()
+            self.wfile.write(b'{"error": "nope"}')
+            return
+        if self.path.endswith("/v1/messages"):  # Anthropic shape
+            type(self).seen_auth[-1] = self.headers.get("x-api-key")
+            body = {"content": [{"type": "text", "text": "pong"}],
+                    "usage": {"input_tokens": 3, "output_tokens": 1}}
+        else:  # OpenAI shape
+            body = {"choices": [{"message": {"content": "pong"}}],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 1}}
+        data = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+class GatewayTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_routes_by_tier_cheapest_first(self):
+        cheap_a = ScriptedProvider("cheap-a", "cheap", ["a"], price_in=5, price_out=5)
+        cheap_b = ScriptedProvider("cheap-b", "cheap", ["b"], price_in=1, price_out=1)
+        strong = ScriptedProvider("strong", "strong", ["s"])
+        gw = Gateway([strong, cheap_a, cheap_b], self.store)
+        self.assertEqual([p.name for p in gw.order("cheap")],
+                         ["cheap-b", "cheap-a", "strong"])
+        self.assertEqual(gw.ask("hi", tier="cheap").provider, "cheap-b")
+        self.assertEqual(gw.ask("hi", tier="strong").provider, "strong")
+
+    def test_unknown_tier_rejected(self):
+        gw = Gateway([ScriptedProvider("c", "cheap", [])], self.store)
+        with self.assertRaises(ValueError):
+            gw.ask("hi", tier="medium")
+
+    def test_retries_once_on_same_provider(self):
+        flaky = ScriptedProvider("flaky", "cheap", [boom(), "recovered"])
+        strong = ScriptedProvider("strong", "strong", ["never"])
+        res = Gateway([flaky, strong], self.store).ask("hi")
+        self.assertEqual(res.text, "recovered")
+        self.assertEqual(res.provider, "flaky")
+        self.assertEqual(flaky.calls, 2)
+        self.assertEqual(strong.calls, 0)
+        self.assertIsNone(res.fallback_from)
+
+    def test_falls_back_after_retry_fails(self):
+        cheap = ScriptedProvider("cheap", "cheap", [boom(), boom()])
+        strong = ScriptedProvider("strong", "strong", ["from strong"])
+        res = Gateway([cheap, strong], self.store).ask("hi")
+        self.assertEqual(res.provider, "strong")
+        self.assertEqual(res.fallback_from, "cheap")
+        self.assertEqual(cheap.calls, 2)
+        rows = self.store.all_calls()
+        self.assertEqual([(r["provider"], r["ok"]) for r in rows],
+                         [("cheap", 0), ("cheap", 0), ("strong", 1)])
+        self.assertEqual(rows[2]["fallback_from"], "cheap")
+        self.assertEqual(rows[0]["error"], "boom")
+
+    def test_all_providers_fail(self):
+        cheap = ScriptedProvider("cheap", "cheap", [boom("x1"), boom("x2")])
+        strong = ScriptedProvider("strong", "strong", [boom("y1"), boom("y2")])
+        with self.assertRaises(AllProvidersFailed) as ctx:
+            Gateway([cheap, strong], self.store).ask("hi")
+        self.assertEqual(len(ctx.exception.errors), 4)
+        self.assertEqual(len(self.store.all_calls()), 4)
+        self.assertTrue(all(r["ok"] == 0 for r in self.store.all_calls()))
+
+    def test_every_call_is_logged_with_cost_and_feature(self):
+        p = ScriptedProvider("c", "cheap", ["fine"], price_in=1000, price_out=1000)
+        res = Gateway([p], self.store).ask("hi", feature="support")
+        row = self.store.all_calls()[0]
+        self.assertEqual(row["feature"], "support")
+        self.assertEqual(row["tokens_in"], 100)
+        self.assertAlmostEqual(row["cost"], 0.2)  # 200 tokens * 1000 / 1M
+        self.assertAlmostEqual(res.cost, 0.2)
+
+    def test_budget_enforced(self):
+        # each call costs 0.2; budget 0.3 allows two calls (soft cap), blocks the third
+        p = ScriptedProvider("c", "cheap", [], price_in=1000, price_out=1000)
+        gw = Gateway([p], self.store, daily_budget=0.3)
+        gw.ask("one")
+        gw.ask("two")
+        self.assertAlmostEqual(self.store.spend_today(), 0.4)
+        with self.assertRaises(BudgetExceeded):
+            gw.ask("three")
+        self.assertEqual(p.calls, 2)
+
+    def test_budget_none_means_unlimited(self):
+        p = ScriptedProvider("c", "cheap", [], price_in=1000, price_out=1000)
+        gw = Gateway([p], self.store, daily_budget=None)
+        for _ in range(5):
+            gw.ask("x")
+        self.assertEqual(p.calls, 5)
+
+    def test_spend_resets_on_new_day(self):
+        now = [1_700_000_000.0]
+        store = Store(":memory:", clock=lambda: now[0])
+        p = ScriptedProvider("c", "cheap", [], price_in=1000, price_out=1000)
+        gw = Gateway([p], store, daily_budget=0.1)
+        gw.ask("x")
+        with self.assertRaises(BudgetExceeded):
+            gw.ask("y")
+        now[0] += 86_400
+        gw.ask("z")  # new UTC day, budget available again
+
+    def test_mock_provider_seeded_failures_are_repeatable(self):
+        def outcomes(seed):
+            m = mock("m", "cheap", fail_rate=0.5, seed=seed)
+            out = []
+            for _ in range(20):
+                try:
+                    m.complete("hi")
+                    out.append(True)
+                except Exception:
+                    out.append(False)
+            return out
+        self.assertEqual(outcomes(3), outcomes(3))
+        self.assertIn(False, outcomes(3))
+        self.assertIn(True, outcomes(3))
+
+    def test_real_provider_requires_prices(self):
+        spec = {"type": "anthropic", "name": "a", "tier": "cheap", "model": "m",
+                "api_key_env": "X", "price_in": None, "price_out": None}
+        with self.assertRaises(ConfigError):
+            build_provider(spec)
+
+    def test_real_provider_without_key_fails_cleanly(self):
+        spec = {"type": "anthropic", "name": "a", "tier": "cheap", "model": "m",
+                "api_key_env": "LLMGATE_TEST_UNSET_KEY", "price_in": 1, "price_out": 1}
+        strong = ScriptedProvider("strong", "strong", ["ok"])
+        res = Gateway([build_provider(spec), strong], self.store).ask("hi")
+        self.assertEqual(res.provider, "strong")
+
+    def test_non_retryable_error_skips_retry(self):
+        limited = ScriptedProvider(
+            "limited", "cheap", [ProviderError("rate limited (HTTP 429)", retryable=False)])
+        backup = ScriptedProvider("backup", "cheap", ["ok"], price_in=50, price_out=50)
+        res = Gateway([limited, backup], self.store, retries=1).ask("hi")
+        self.assertEqual(limited.calls, 1)  # not retried
+        self.assertEqual(res.provider, "backup")
+        self.assertEqual(res.fallback_from, "limited")
+
+    def test_priority_beats_price_within_tier(self):
+        local = ScriptedProvider("local", "cheap", ["l"], price_in=0, price_out=0)
+        local.priority = 10
+        cloud = ScriptedProvider("cloud", "cheap", ["c"], price_in=5, price_out=5)
+        gw = Gateway([local, cloud], self.store)
+        self.assertEqual([p.name for p in gw.order("cheap")], ["cloud", "local"])
+
+
+class OptionalProviderTests(unittest.TestCase):
+    SPEC = {"type": "openai", "name": "paid", "tier": "strong", "model": "m",
+            "api_key_env": "PAID_KEY", "price_in": 1, "price_out": 1,
+            "optional": True}
+
+    def test_optional_without_key_is_skipped(self):
+        notes = []
+        built = build_providers([self.SPEC], environ={}, log=notes.append)
+        self.assertEqual(built, [])
+        self.assertIn("PAID_KEY not set", notes[0])
+
+    def test_optional_with_key_is_built(self):
+        built = build_providers([self.SPEC], environ={"PAID_KEY": "x"})
+        self.assertEqual([p.name for p in built], ["paid"])
+
+    def test_non_optional_without_key_is_still_built(self):
+        spec = dict(self.SPEC, optional=False)
+        self.assertEqual(len(build_providers([spec], environ={})), 1)
+
+
+class OpenAICompatHTTPTests(unittest.TestCase):
+    """Exercises the real urllib adapter against a local fake server."""
+
+    def setUp(self):
+        _FakeAPI.status = 200
+        _FakeAPI.seen_auth = []
+        self.server = HTTPServer(("127.0.0.1", 0), _FakeAPI)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/v1"
+
+    def provider(self, **extra):
+        spec = {"type": "openai", "name": "fake", "tier": "cheap", "model": "m",
+                "base_url": self.url, "price_in": 1, "price_out": 1}
+        spec.update(extra)
+        return build_provider(spec)
+
+    def test_success_without_key(self):
+        resp = self.provider().complete("ping")
+        self.assertEqual(resp.text, "pong")
+        self.assertEqual((resp.tokens_in, resp.tokens_out), (3, 1))
+        self.assertEqual(_FakeAPI.seen_auth, [None])
+
+    def test_429_is_not_retryable(self):
+        _FakeAPI.status = 429
+        with self.assertRaises(ProviderError) as ctx:
+            self.provider().complete("ping")
+        self.assertFalse(ctx.exception.retryable)
+        self.assertIn("rate limited", str(ctx.exception))
+
+    def test_500_is_retryable(self):
+        _FakeAPI.status = 503
+        with self.assertRaises(ProviderError) as ctx:
+            self.provider().complete("ping")
+        self.assertTrue(ctx.exception.retryable)
+
+    def test_anthropic_adapter_against_fake_server(self):
+        os.environ["LLMGATE_TEST_ANTHROPIC_KEY"] = "test-key"
+        self.addCleanup(os.environ.pop, "LLMGATE_TEST_ANTHROPIC_KEY", None)
+        p = build_provider({"type": "anthropic", "name": "a", "tier": "strong",
+                            "model": "m", "api_key_env": "LLMGATE_TEST_ANTHROPIC_KEY",
+                            "base_url": self.url[:-3], "price_in": 1, "price_out": 1})
+        resp = p.complete("ping", system="be brief")
+        self.assertEqual(resp.text, "pong")
+        self.assertEqual((resp.tokens_in, resp.tokens_out), (3, 1))
+        self.assertEqual(_FakeAPI.seen_auth, ["test-key"])
+
+    def test_anthropic_429_is_not_retryable(self):
+        _FakeAPI.status = 429
+        os.environ["LLMGATE_TEST_ANTHROPIC_KEY"] = "test-key"
+        self.addCleanup(os.environ.pop, "LLMGATE_TEST_ANTHROPIC_KEY", None)
+        p = build_provider({"type": "anthropic", "name": "a", "tier": "strong",
+                            "model": "m", "api_key_env": "LLMGATE_TEST_ANTHROPIC_KEY",
+                            "base_url": self.url[:-3], "price_in": 1, "price_out": 1})
+        with self.assertRaises(ProviderError) as ctx:
+            p.complete("ping")
+        self.assertFalse(ctx.exception.retryable)
+
+    def test_gateway_falls_back_once_on_429(self):
+        _FakeAPI.status = 429
+        store = Store(":memory:")
+        self.addCleanup(store.close)
+        backup = ScriptedProvider("backup", "strong", ["ok"])
+        res = Gateway([self.provider(), backup], store, retries=1).ask("hi")
+        self.assertEqual(res.provider, "backup")
+        self.assertEqual(len(_FakeAPI.seen_auth), 1)  # one attempt, no retry
+
+
+if __name__ == "__main__":
+    unittest.main()

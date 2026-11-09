@@ -1,0 +1,60 @@
+{
+  "_note": "Free-tier setup, no card needed. Copy current model IDs from the Groq console, Google AI Studio and `ollama list`. Prices are per 1M tokens: put each model's paid list price so the dashboard shows what the traffic would have cost (you are not charged on free tiers), or 0. The loader refuses null. Ollama has priority 10 so it is the last resort within its tier. OpenAI and Anthropic are \"optional\": they are skipped until OPENAI_API_KEY / ANTHROPIC_API_KEY is set, and they cost money once on (no lasting free API tier).",
+  "daily_budget": 1.0,
+  "retries": 1,
+  "db": "llmgate.db",
+  "providers": [
+    {
+      "type": "openai",
+      "name": "groq-cheap",
+      "tier": "cheap",
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "GROQ_API_KEY",
+      "base_url": "https://api.groq.com/openai/v1",
+      "price_in": null,
+      "price_out": null
+    },
+    {
+      "type": "openai",
+      "name": "gemini-strong",
+      "tier": "strong",
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "price_in": null,
+      "price_out": null
+    },
+    {
+      "type": "openai",
+      "name": "ollama-local",
+      "tier": "cheap",
+      "priority": 10,
+      "model": "FILL_IN_MODEL_ID",
+      "base_url": "http://localhost:11434/v1",
+      "timeout": 120,
+      "price_in": 0,
+      "price_out": 0
+    },
+    {
+      "type": "openai",
+      "name": "openai-cheap",
+      "tier": "cheap",
+      "optional": true,
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1",
+      "price_in": null,
+      "price_out": null
+    },
+    {
+      "type": "anthropic",
+      "name": "anthropic-strong",
+      "tier": "strong",
+      "optional": true,
+      "model": "FILL_IN_MODEL_ID",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "price_in": null,
+      "price_out": null
+    }
+  ]
+}

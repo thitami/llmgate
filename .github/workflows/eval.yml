@@ -1,0 +1,17 @@
+name: eval
+
+on:
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t . -v
+      - name: Eval gate (fails the build on regression)
+        run: python -m llmgate eval --config config.mock.json --cases evals/cases.json --baseline evals/baseline.json
