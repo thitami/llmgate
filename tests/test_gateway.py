@@ -16,14 +16,16 @@ class _FakeAPI(BaseHTTPRequestHandler):
     """Tiny local OpenAI-style server. Behaviour set by the class attribute."""
     status = 200
     seen_auth = []
+    seen_agent = []
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("content-length", 0)))
         type(self).seen_auth.append(self.headers.get("authorization"))
+        type(self).seen_agent.append(self.headers.get("user-agent"))
         if self.status != 200:
             self.send_response(self.status)
             self.end_headers()
-            self.wfile.write(b'{"error": "nope"}')
+            self.wfile.write(b'{\n  "error": {\n    "message": "nope"\n  }\n}')
             return
         if self.path.endswith("/v1/messages"):  # Anthropic shape
             type(self).seen_auth[-1] = self.headers.get("x-api-key")
@@ -203,6 +205,7 @@ class OpenAICompatHTTPTests(unittest.TestCase):
     def setUp(self):
         _FakeAPI.status = 200
         _FakeAPI.seen_auth = []
+        _FakeAPI.seen_agent = []
         self.server = HTTPServer(("127.0.0.1", 0), _FakeAPI)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -220,6 +223,17 @@ class OpenAICompatHTTPTests(unittest.TestCase):
         self.assertEqual(resp.text, "pong")
         self.assertEqual((resp.tokens_in, resp.tokens_out), (3, 1))
         self.assertEqual(_FakeAPI.seen_auth, [None])
+
+    def test_sends_llmgate_user_agent(self):
+        self.provider().complete("ping")
+        self.assertTrue(_FakeAPI.seen_agent[0].startswith("llmgate/"))
+
+    def test_error_body_is_one_line(self):
+        _FakeAPI.status = 503
+        with self.assertRaises(ProviderError) as ctx:
+            self.provider().complete("ping")
+        self.assertNotIn("\n", str(ctx.exception))
+        self.assertIn('"message": "nope"', str(ctx.exception))
 
     def test_429_is_not_retryable(self):
         _FakeAPI.status = 429

@@ -11,18 +11,30 @@
       "model": "FILL_IN_MODEL_ID",
       "api_key_env": "GROQ_API_KEY",
       "base_url": "https://api.groq.com/openai/v1",
-      "price_in": null,
-      "price_out": null
+      "price_in": 0.075,
+      "price_out": 0.30
+    },
+    {
+      "type": "openai",
+      "name": "groq-strong",
+      "tier": "strong",
+      "model": "openai/gpt-oss-120b",
+      "api_key_env": "GROQ_API_KEY",
+      "base_url": "https://api.groq.com/openai/v1",
+      "price_in": 0.15,
+      "price_out": 0.60
     },
     {
       "type": "openai",
       "name": "gemini-strong",
       "tier": "strong",
-      "model": "FILL_IN_MODEL_ID",
+      "optional": true,
+      "model": "gemini-3.8-flash",
       "api_key_env": "GEMINI_API_KEY",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "price_in": null,
-      "price_out": null
+      "max_tokens": 4096,
+      "price_in": 0.75,
+      "price_out": 3.75
     },
     {
       "type": "openai",

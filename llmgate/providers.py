@@ -16,7 +16,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from . import __version__
+
 TIERS = ("cheap", "strong")
+USER_AGENT = f"llmgate/{__version__} (+https://github.com/thitami/llmgate)"
 
 
 class ProviderError(Exception):
@@ -101,6 +104,9 @@ def _post_json(url, headers, body, timeout):
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("content-type", "application/json")
+    # Some providers sit behind Cloudflare, which rejects urllib's default
+    # "Python-urllib/x.y" agent with HTTP 403 (error code 1010).
+    req.add_header("user-agent", USER_AGENT)
     for key, value in headers.items():
         req.add_header(key, value)
     start = time.perf_counter()
@@ -109,7 +115,7 @@ def _post_json(url, headers, body, timeout):
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         latency = (time.perf_counter() - start) * 1000
-        detail = exc.read().decode("utf-8", "replace")[:200]
+        detail = " ".join(exc.read().decode("utf-8", "replace").split())[:200]
         # 429 = rate limited: retrying immediately just burns more quota.
         # Other 4xx are our fault (bad model id, bad request): retrying won't help.
         # 5xx are worth one retry.
