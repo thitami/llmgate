@@ -195,7 +195,7 @@ def headline(summaries):
 
 def _badge(state, detail="", label=None):
     colour, symbol, default = STATES[state]
-    text = (label or default) + (f" ({detail})" if detail else "")
+    text = (label or default) + (f": {detail}" if detail else "")
     return (f'<span class="badge"><span class="dot" style="background:{colour}">'
             f'{symbol}</span>{html.escape(text)}</span>')
 
@@ -336,9 +336,13 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
         f"request to each provider: “{html.escape(PROBE_PROMPT)}”.</li>"
         "<li>One attempt per provider, no retries, no fallback. Uptime is "
         "successful probes divided by all probes in the window.</li>"
-        "<li>All providers are on their free tier. Free tiers have lower rate "
-        "limits and may get lower priority than paid traffic, so these numbers "
-        "say nothing about paid tiers.</li>"
+        "<li>All providers are on their free tier (GitHub Models: its free "
+        "usage allowance). Free tiers have lower rate limits and may get lower "
+        "priority than paid traffic, so these numbers say nothing about paid "
+        "tiers.</li>"
+        "<li>Some models appear through more than one host (for example "
+        "gpt-oss-120b on Groq and through OpenRouter). Compare them to see what "
+        "the host adds, not the model.</li>"
         "<li>Probes run from GitHub-hosted runners, so network location is "
         "whatever GitHub assigns. Scheduled runs can be delayed or skipped by "
         "GitHub; a grey bar means no probe ran.</li>"

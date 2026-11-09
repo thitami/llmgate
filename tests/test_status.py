@@ -123,6 +123,7 @@ class PageTests(unittest.TestCase):
         self.assertNotIn("<y>", page)
         self.assertIn("server error (5xx) 42", page)
         self.assertIn("Rate limited", page)  # legend label, not colour alone
+        self.assertNotIn("((", page)  # no nested brackets in badges
         self.assertIn("How this is measured", page)
         self.assertIn("https://example.com/r", page)
         self.assertIn("days of data", page)  # 30d window has only 7 days
@@ -142,9 +143,14 @@ class StatusConfigTests(unittest.TestCase):
             cfg = json.load(fh)
         self.assertTrue(all(p.get("optional") for p in cfg["providers"]))
         self.assertEqual(build_providers(cfg["providers"], environ={}), [])
-        built = build_providers(cfg["providers"],
-                                environ={"GROQ_API_KEY": "x", "GEMINI_API_KEY": "y"})
+        keys = {p["api_key_env"]: "x" for p in cfg["providers"]}
+        built = build_providers(cfg["providers"], environ=keys)
         self.assertEqual(len(built), len(cfg["providers"]))
+        # GitHub Models runs on the workflow's own token, no extra secret
+        self.assertIn("GITHUB_TOKEN", keys)
+        # only GitHub Models with the built-in token: 2 providers on, rest skipped
+        self.assertEqual(len(build_providers(cfg["providers"],
+                                             environ={"GITHUB_TOKEN": "t"})), 2)
 
 
 if __name__ == "__main__":

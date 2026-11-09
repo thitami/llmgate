@@ -1,5 +1,5 @@
 {
-  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped when its key is not set (as a GitHub Actions secret, or exported locally). Prices are unused by the probe but required by the loader. Gemini model IDs and free-tier coverage change often: check AI Studio. Gemini prices here are list prices and unused.",
+  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped until its key is set (a GitHub Actions secret, or exported locally). GitHub Models uses the workflow's built-in GITHUB_TOKEN (permission models: read), so it needs no secret. Mistral uses the -latest aliases, which Mistral can point at newer models. openrouter / gpt-oss-120b is the same model as groq / gpt-oss-120b, reached through an aggregator: check the :free ID still exists before adding the key. Prices are unused by the probe but required by the loader; Gemini and Groq values are list prices.",
   "providers": [
     {
       "type": "openai",
@@ -65,6 +65,71 @@
       "timeout": 30,
       "price_in": 0.75,
       "price_out": 3.75
+    },
+    {
+      "type": "openai",
+      "name": "github / gpt-4.1-mini",
+      "tier": "cheap",
+      "optional": true,
+      "model": "openai/gpt-4.1-mini",
+      "api_key_env": "GITHUB_TOKEN",
+      "base_url": "https://models.github.ai/inference",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0,
+      "price_out": 0
+    },
+    {
+      "type": "openai",
+      "name": "github / gpt-4.1",
+      "tier": "strong",
+      "optional": true,
+      "model": "openai/gpt-4.1",
+      "api_key_env": "GITHUB_TOKEN",
+      "base_url": "https://models.github.ai/inference",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0,
+      "price_out": 0
+    },
+    {
+      "type": "openai",
+      "name": "mistral / small",
+      "tier": "cheap",
+      "optional": true,
+      "model": "mistral-small-latest",
+      "api_key_env": "MISTRAL_API_KEY",
+      "base_url": "https://api.mistral.ai/v1",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0,
+      "price_out": 0
+    },
+    {
+      "type": "openai",
+      "name": "mistral / large",
+      "tier": "strong",
+      "optional": true,
+      "model": "mistral-large-latest",
+      "api_key_env": "MISTRAL_API_KEY",
+      "base_url": "https://api.mistral.ai/v1",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0,
+      "price_out": 0
+    },
+    {
+      "type": "openai",
+      "name": "openrouter / gpt-oss-120b",
+      "tier": "strong",
+      "optional": true,
+      "model": "openai/gpt-oss-120b:free",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "base_url": "https://openrouter.ai/api/v1",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0,
+      "price_out": 0
     }
   ]
 }
