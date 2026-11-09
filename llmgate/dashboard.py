@@ -1,8 +1,17 @@
 """Static HTML dashboard generated from the call log. No JavaScript, no assets.
 
-Every row in the log is one provider attempt, so "calls" counts attempts
-(a retry or a fallback is its own call). Latency percentiles use nearest-rank
-over all attempts that have a latency, failed ones included.
+Two views of the same log:
+
+- Requests: what the caller experienced. One request is one gateway.ask(),
+  however many attempts it took. It is served if any attempt succeeded.
+  End-to-end latency adds up every attempt's latency, because attempts run
+  one after another, so a 30s timeout before a fallback shows up here.
+- Attempts: what each provider did. Every row in the log is one attempt.
+  Provider latency only counts successful attempts, so a provider that fails
+  fast (connection refused in 1 ms) can't make itself look quick.
+
+Percentiles are nearest-rank. Rows written before request ids existed are
+treated as one request each.
 """
 
 import html
@@ -20,7 +29,8 @@ def percentile(values, p):
 
 
 def summarise(rows):
-    lat = [r["latency_ms"] for r in rows if r["latency_ms"] is not None]
+    """Attempt-level numbers. Latency percentiles cover successful attempts only."""
+    lat = [r["latency_ms"] for r in rows if r["ok"] and r["latency_ms"] is not None]
     fails = sum(1 for r in rows if not r["ok"])
     return {
         "calls": len(rows),
@@ -32,6 +42,32 @@ def summarise(rows):
         "cost": sum(r["cost"] for r in rows),
         "p50": percentile(lat, 50),
         "p95": percentile(lat, 95),
+    }
+
+
+def requests_of(rows):
+    """Group attempt rows into requests, oldest first."""
+    groups = {}
+    for r in rows:
+        key = r.get("request_id") or f"row-{r['id']}"
+        groups.setdefault(key, []).append(r)
+    return list(groups.values())
+
+
+def summarise_requests(rows):
+    """Request-level numbers: what the caller saw."""
+    reqs = requests_of(rows)
+    served = [req for req in reqs if any(a["ok"] for a in req)]
+    e2e = [sum(a["latency_ms"] or 0 for a in req) for req in reqs]
+    return {
+        "requests": len(reqs),
+        "served": len(served),
+        "served_rate": (len(served) / len(reqs)) if reqs else 0.0,
+        "via_fallback": sum(1 for req in served
+                            if any(a["ok"] and a["fallback_from"] for a in req)),
+        "cost": sum(a["cost"] for a in rows),
+        "p50": percentile(e2e, 50),
+        "p95": percentile(e2e, 95),
     }
 
 
@@ -56,8 +92,8 @@ def _tile(label, value):
 
 
 def _table(title, key_header, groups):
-    head = ("<tr><th>{}</th><th>Calls</th><th>Failure rate</th><th>Fallbacks</th>"
-            "<th>Tokens</th><th>Cost</th><th>p50</th><th>p95</th></tr>"
+    head = ("<tr><th>{}</th><th>Attempts</th><th>Failure rate</th><th>Fallbacks</th>"
+            "<th>Tokens</th><th>Cost</th><th>p50 (ok)</th><th>p95 (ok)</th></tr>"
             ).format(html.escape(key_header))
     body = []
     for name, s in groups.items():
@@ -68,6 +104,26 @@ def _table(title, key_header, groups):
             f"<td>{_ms(s['p50'])}</td><td>{_ms(s['p95'])}</td></tr>")
     if not body:
         body.append('<tr><td colspan="8" class="muted">No calls yet.</td></tr>')
+    return (f"<h2>{html.escape(title)}</h2><table>{head}{''.join(body)}</table>")
+
+
+def _request_table(title, key_header, rows, key):
+    groups = {}
+    for r in rows:
+        groups.setdefault(r[key], []).append(r)
+    head = ("<tr><th>{}</th><th>Requests</th><th>Served</th><th>Via fallback</th>"
+            "<th>Cost</th><th>p50 end-to-end</th><th>p95 end-to-end</th></tr>"
+            ).format(html.escape(key_header))
+    body = []
+    for name, group in sorted(groups.items()):
+        s = summarise_requests(group)
+        body.append(
+            f"<tr><td>{html.escape(str(name))}</td><td>{s['requests']}</td>"
+            f"<td>{s['served_rate']:.1%}</td><td>{s['via_fallback']}</td>"
+            f"<td>{_cost(s['cost'])}</td>"
+            f"<td>{_ms(s['p50'])}</td><td>{_ms(s['p95'])}</td></tr>")
+    if not body:
+        body.append('<tr><td colspan="7" class="muted">No calls yet.</td></tr>')
     return (f"<h2>{html.escape(title)}</h2><table>{head}{''.join(body)}</table>")
 
 
@@ -102,19 +158,24 @@ tr:last-child td{border-bottom:0}
 
 def render(rows, budget=None, spent_today=None, generated_at=None, recent=10):
     total = summarise(rows)
+    req = summarise_requests(rows)
     when = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     tiles = [
-        _tile("Calls", f"{total['calls']:,}"),
-        _tile("Failure rate", f"{total['failure_rate']:.1%}"),
-        _tile("Fallbacks served", f"{total['fallbacks']:,}"),
-        _tile("Tokens", f"{total['tokens']:,}"),
+        _tile("Requests", f"{req['requests']:,}"),
+        _tile("Served", f"{req['served_rate']:.1%}"),
+        _tile("Via fallback", f"{req['via_fallback']:,}"),
+        _tile("p50 end-to-end", _ms(req["p50"])),
+        _tile("p95 end-to-end", _ms(req["p95"])),
         _tile("Cost", _cost(total["cost"])),
-        _tile("p50 latency", _ms(total["p50"])),
-        _tile("p95 latency", _ms(total["p95"])),
     ]
     if budget is not None and spent_today is not None:
         tiles.append(_tile("Spent today / budget",
                            f"{_cost(spent_today)} / {_cost(budget)}"))
+    attempt_tiles = [
+        _tile("Attempts", f"{total['calls']:,}"),
+        _tile("Attempt failure rate", f"{total['failure_rate']:.1%}"),
+        _tile("Tokens", f"{total['tokens']:,}"),
+    ]
 
     failed = [r for r in rows if not r["ok"]][-recent:][::-1]
     fail_rows = []
@@ -136,11 +197,15 @@ def render(rows, budget=None, spent_today=None, generated_at=None, recent=10):
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<title>llmgate dashboard</title><style>{CSS}</style></head><body><main>"
         "<h1>llmgate dashboard</h1>"
-        f"<p class=\"sub\">Generated {html.escape(when)}. Each call is one provider "
-        "attempt, so retries and fallbacks count as their own calls.</p>"
+        f"<p class=\"sub\">Generated {html.escape(when)}. A request is one call to "
+        "the gateway; it may take several provider attempts (retries, fallbacks). "
+        "End-to-end latency includes time spent on failed attempts. "
+        "Provider latency counts successful attempts only.</p>"
         f"<div class=\"tiles\">{''.join(tiles)}</div>"
+        + _request_table("By feature", "Feature", rows, "feature")
+        + "<h2>Provider attempts</h2>"
+        f"<div class=\"tiles\">{''.join(attempt_tiles)}</div>"
         + _table("By provider", "Provider", group_by(rows, "provider"))
-        + _table("By feature", "Feature", group_by(rows, "feature"))
         + fail_table + "</main></body></html>")
 
 

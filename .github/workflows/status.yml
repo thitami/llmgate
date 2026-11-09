@@ -1,0 +1,61 @@
+name: status
+
+# Probes each free-tier provider every 2 hours and publishes the status page
+# to GitHub Pages. Needs: repo secrets GROQ_API_KEY and/or GEMINI_API_KEY, and
+# Settings > Pages > Source set to "GitHub Actions".
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"   # minute 17 avoids the top-of-hour rush on Actions
+  workflow_dispatch:          # "Run workflow" button for a manual probe
+
+permissions:
+  contents: write   # push probe history to the status-data branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: status
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check out probe history
+        run: scripts/status-data.sh checkout "$RUNNER_TEMP/status-data"
+
+      - name: Probe providers
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m llmgate probe --config config.status.json --out "$RUNNER_TEMP/status-data/probes.jsonl"
+
+      - name: Save probe history
+        run: scripts/status-data.sh save "$RUNNER_TEMP/status-data"
+
+      - name: Build status page
+        run: |
+          mkdir -p site
+          cp "$RUNNER_TEMP/status-data/probes.jsonl" site/probes.jsonl
+          python -m llmgate status-page --data site/probes.jsonl --out site/index.html \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

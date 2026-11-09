@@ -15,6 +15,7 @@ from llmgate.providers import ProviderError
 class _FakeAPI(BaseHTTPRequestHandler):
     """Tiny local OpenAI-style server. Behaviour set by the class attribute."""
     status = 200
+    delay = 0.0
     seen_auth = []
     seen_agent = []
 
@@ -22,6 +23,9 @@ class _FakeAPI(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("content-length", 0)))
         type(self).seen_auth.append(self.headers.get("authorization"))
         type(self).seen_agent.append(self.headers.get("user-agent"))
+        if self.delay:
+            import time
+            time.sleep(self.delay)
         if self.status != 200:
             self.send_response(self.status)
             self.end_headers()
@@ -42,6 +46,12 @@ class _FakeAPI(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
+
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client gave up first (timeout test); not an error
 
 
 class GatewayTests(unittest.TestCase):
@@ -179,6 +189,122 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual([p.name for p in gw.order("cheap")], ["cloud", "local"])
 
 
+class FakeClock:
+    def __init__(self, t=1_800_000_000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+class CircuitBreakerTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = FakeClock()
+        self.store = Store(":memory:", clock=self.clock)
+        self.addCleanup(self.store.close)
+
+    def gateway(self, flaky, backup, **kw):
+        kw.setdefault("breaker_threshold", 3)
+        kw.setdefault("breaker_cooldown", 60)
+        return Gateway([flaky, backup], self.store, retries=1, **kw)
+
+    def test_opens_after_threshold_and_skips_provider(self):
+        flaky = ScriptedProvider("flaky", "cheap", [boom()] * 10)
+        backup = ScriptedProvider("backup", "strong", ["ok"] * 10)
+        gw = self.gateway(flaky, backup)
+        gw.ask("1")  # flaky fails twice (attempt + retry)
+        gw.ask("2")  # third consecutive failure -> breaker now open
+        calls_before = flaky.calls
+        res = gw.ask("3")
+        self.assertEqual(flaky.calls, calls_before)  # not called at all
+        self.assertEqual(res.skipped, ["flaky"])
+        self.assertEqual(res.provider, "backup")
+        self.assertEqual(res.fallback_from, "flaky")
+
+    def test_half_open_after_cooldown_then_closes_on_success(self):
+        flaky = ScriptedProvider("flaky", "cheap", [boom()] * 4 + ["back"])
+        backup = ScriptedProvider("backup", "strong", ["ok"] * 10)
+        gw = self.gateway(flaky, backup, breaker_threshold=3)
+        gw.ask("1")
+        gw.ask("2")
+        self.assertTrue(gw.breaker_open(flaky))
+        self.clock.t += 61
+        self.assertFalse(gw.breaker_open(flaky))  # trial allowed
+        res = gw.ask("3")
+        self.assertEqual(res.provider, "flaky")
+        self.assertFalse(gw.breaker_open(flaky))
+
+    def test_trial_failure_reopens(self):
+        flaky = ScriptedProvider("flaky", "cheap", [boom()] * 10)
+        backup = ScriptedProvider("backup", "strong", ["ok"] * 10)
+        gw = self.gateway(flaky, backup)
+        gw.ask("1")
+        gw.ask("2")
+        self.clock.t += 61
+        gw.ask("3")  # trial fails
+        self.assertTrue(gw.breaker_open(flaky))
+
+    def test_state_survives_a_new_gateway(self):
+        # every `llmgate ask` is a new process; the log carries the state
+        flaky = ScriptedProvider("flaky", "cheap", [boom()] * 10)
+        backup = ScriptedProvider("backup", "strong", ["ok"] * 10)
+        self.gateway(flaky, backup).ask("1")
+        self.gateway(flaky, backup).ask("2")
+        fresh = self.gateway(flaky, backup)
+        self.assertTrue(fresh.breaker_open(flaky))
+
+    def test_all_open_tries_everything_anyway(self):
+        a = ScriptedProvider("a", "cheap", [boom()] * 3 + ["a-ok"])
+        b = ScriptedProvider("b", "strong", [boom()] * 3 + ["b-ok"])
+        gw = Gateway([a, b], self.store, retries=1, breaker_threshold=2)
+        with self.assertRaises(AllProvidersFailed):
+            gw.ask("1")
+        self.assertTrue(gw.breaker_open(a) and gw.breaker_open(b))
+        res = gw.ask("2")
+        self.assertEqual(res.provider, "a")
+        self.assertEqual(res.skipped, [])
+
+    def test_disabled(self):
+        flaky = ScriptedProvider("flaky", "cheap", [boom()] * 10)
+        backup = ScriptedProvider("backup", "strong", ["ok"] * 10)
+        gw = self.gateway(flaky, backup, breaker_threshold=None)
+        for i in range(4):
+            gw.ask(str(i))
+        self.assertEqual(flaky.calls, 8)
+
+    def test_attempts_share_a_request_id(self):
+        flaky = ScriptedProvider("flaky", "cheap", [boom(), boom()])
+        backup = ScriptedProvider("backup", "strong", ["ok"])
+        res = self.gateway(flaky, backup).ask("1")
+        ids = {r["request_id"] for r in self.store.all_calls()}
+        self.assertEqual(ids, {res.request_id})
+
+
+class StoreMigrationTests(unittest.TestCase):
+    def test_old_database_gets_request_id_column(self):
+        import sqlite3
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            conn = sqlite3.connect(path)
+            conn.executescript(
+                "CREATE TABLE calls (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " ts REAL NOT NULL, day TEXT NOT NULL, provider TEXT NOT NULL,"
+                " ok INTEGER NOT NULL, error TEXT, tokens_in INTEGER NOT NULL DEFAULT 0,"
+                " tokens_out INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0,"
+                " latency_ms REAL, feature TEXT NOT NULL DEFAULT 'default',"
+                " fallback_from TEXT);"
+                "INSERT INTO calls (ts, day, provider, ok) VALUES (1, '1970-01-01', 'p', 1);")
+            conn.commit()
+            conn.close()
+            store = Store(path)
+            store.record("p", ok=True, request_id="abc")
+            rows = store.all_calls()
+            store.close()
+        self.assertIsNone(rows[0]["request_id"])
+        self.assertEqual(rows[1]["request_id"], "abc")
+
+
 class OptionalProviderTests(unittest.TestCase):
     SPEC = {"type": "openai", "name": "paid", "tier": "strong", "model": "m",
             "api_key_env": "PAID_KEY", "price_in": 1, "price_out": 1,
@@ -204,6 +330,7 @@ class OpenAICompatHTTPTests(unittest.TestCase):
 
     def setUp(self):
         _FakeAPI.status = 200
+        _FakeAPI.delay = 0.0
         _FakeAPI.seen_auth = []
         _FakeAPI.seen_agent = []
         self.server = HTTPServer(("127.0.0.1", 0), _FakeAPI)
@@ -234,6 +361,13 @@ class OpenAICompatHTTPTests(unittest.TestCase):
             self.provider().complete("ping")
         self.assertNotIn("\n", str(ctx.exception))
         self.assertIn('"message": "nope"', str(ctx.exception))
+
+    def test_timeout_is_not_retryable(self):
+        _FakeAPI.delay = 0.5
+        with self.assertRaises(ProviderError) as ctx:
+            self.provider(timeout=0.1).complete("ping")
+        self.assertFalse(ctx.exception.retryable)
+        self.assertIn("Timeout", str(ctx.exception))
 
     def test_429_is_not_retryable(self):
         _FakeAPI.status = 429

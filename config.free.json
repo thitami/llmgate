@@ -8,11 +8,11 @@
       "type": "openai",
       "name": "groq-cheap",
       "tier": "cheap",
-      "model": "FILL_IN_MODEL_ID",
+      "model": "openai/gpt-oss-20b",
       "api_key_env": "GROQ_API_KEY",
       "base_url": "https://api.groq.com/openai/v1",
       "price_in": 0.075,
-      "price_out": 0.30
+      "price_out": 0.3
     },
     {
       "type": "openai",
@@ -22,7 +22,7 @@
       "api_key_env": "GROQ_API_KEY",
       "base_url": "https://api.groq.com/openai/v1",
       "price_in": 0.15,
-      "price_out": 0.60
+      "price_out": 0.6
     },
     {
       "type": "openai",
@@ -34,18 +34,9 @@
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "max_tokens": 4096,
       "price_in": 0.75,
-      "price_out": 3.75
-    },
-    {
-      "type": "openai",
-      "name": "ollama-local",
-      "tier": "cheap",
-      "priority": 10,
-      "model": "FILL_IN_MODEL_ID",
-      "base_url": "http://localhost:11434/v1",
-      "timeout": 120,
-      "price_in": 0,
-      "price_out": 0
+      "price_out": 3.75,
+      "priority": -1,
+      "timeout": 10
     },
     {
       "type": "openai",

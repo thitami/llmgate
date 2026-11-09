@@ -8,6 +8,7 @@ import sys
 
 from . import dashboard as dash
 from . import evals
+from . import status
 from .gateway import AllProvidersFailed, BudgetExceeded, Gateway
 from .providers import ConfigError, build_providers
 from .store import Store
@@ -50,8 +51,11 @@ def make_gateway(cfg, store, budget="from-config"):
                           "or add a provider without \"optional\": true")
     if budget == "from-config":
         budget = cfg.get("daily_budget")
+    breaker = cfg.get("circuit_breaker", {})
     return Gateway(providers, store, daily_budget=budget,
-                   retries=cfg.get("retries", 1))
+                   retries=cfg.get("retries", 1),
+                   breaker_threshold=breaker.get("threshold", 3),
+                   breaker_cooldown=breaker.get("cooldown_seconds", 60))
 
 
 def cmd_ask(args):
@@ -70,6 +74,8 @@ def cmd_ask(args):
         store.close()
     print(res.text)
     note = f"[{res.provider} | cost ${res.cost:.6f} | {res.latency_ms:.0f} ms"
+    if res.skipped:
+        note += f" | circuit open: {', '.join(res.skipped)}"
     if res.fallback_from:
         note += f" | fell back from {res.fallback_from}"
     print(note + "]", file=sys.stderr)
@@ -120,12 +126,57 @@ def cmd_eval(args):
 
 
 def cmd_dashboard(args):
+    existed = os.path.exists(args.db)
+    if not existed:
+        print(f"warning: {args.db} does not exist; the dashboard will be empty. "
+              "Send some requests with `llmgate ask` first.", file=sys.stderr)
     store = Store(args.db)
     try:
+        if existed and not store.all_calls():
+            print(f"warning: no calls logged in {args.db}; the dashboard will "
+                  "be empty.", file=sys.stderr)
         out = dash.write_dashboard(store, args.out, budget=args.budget)
     finally:
         store.close()
     print(f"dashboard written to {out}")
+    return 0
+
+
+def cmd_probe(args):
+    cfg = load_config(args.config)
+    providers = build_providers(cfg.get("providers", []),
+                                log=lambda m: print(m, file=sys.stderr))
+    if not providers:
+        raise ConfigError("no providers enabled: set at least one API key")
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    for r in status.probe_all(providers, args.out):
+        if r["ok"]:
+            note = f"ok {r['latency_ms']:.0f} ms" + ("" if r["correct"] else ", wrong answer")
+        else:
+            note = f"FAILED {r['kind']}: {r['error']}"
+        print(f"{r['provider']:<24} {note}")
+    # Provider failures are data, not errors: exit 0 so the schedule keeps going.
+    return 0
+
+
+def cmd_status_page(args):
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    if not os.path.exists(args.data):
+        print(f"warning: {args.data} does not exist; writing an empty page",
+              file=sys.stderr)
+        records = []
+        page = status.render(records, title=args.title, repo_url=args.repo_url,
+                             slot_hours=args.slot_hours)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(page)
+    else:
+        n = status.write_page(args.data, args.out, title=args.title,
+                              repo_url=args.repo_url, slot_hours=args.slot_hours)
+        print(f"status page from {n} probes written to {args.out}")
     return 0
 
 
@@ -208,6 +259,19 @@ def build_parser():
     d.add_argument("--out", default="dashboard.html")
     d.add_argument("--budget", type=float, default=None)
     d.set_defaults(func=cmd_dashboard)
+
+    pr = sub.add_parser("probe", help="probe each provider once, append to a JSONL file")
+    pr.add_argument("--config", default="config.status.json")
+    pr.add_argument("--out", default="status/probes.jsonl")
+    pr.set_defaults(func=cmd_probe)
+
+    sp = sub.add_parser("status-page", help="build the public status page")
+    sp.add_argument("--data", default="status/probes.jsonl")
+    sp.add_argument("--out", default="site/index.html")
+    sp.add_argument("--title", default="Free LLM API status")
+    sp.add_argument("--repo-url", default=None)
+    sp.add_argument("--slot-hours", type=int, default=2)
+    sp.set_defaults(func=cmd_status_page)
 
     m = sub.add_parser("demo", help="offline demo of everything")
     m.add_argument("--config", default=DEFAULT_CONFIG)

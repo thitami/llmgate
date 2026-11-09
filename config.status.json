@@ -1,0 +1,70 @@
+{
+  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped when its key is not set (as a GitHub Actions secret, or exported locally). Prices are unused by the probe but required by the loader. Gemini model IDs and free-tier coverage change often: check AI Studio. Gemini prices here are list prices and unused.",
+  "providers": [
+    {
+      "type": "openai",
+      "name": "groq / gpt-oss-20b",
+      "tier": "cheap",
+      "optional": true,
+      "model": "openai/gpt-oss-20b",
+      "api_key_env": "GROQ_API_KEY",
+      "base_url": "https://api.groq.com/openai/v1",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0.075,
+      "price_out": 0.3
+    },
+    {
+      "type": "openai",
+      "name": "groq / gpt-oss-120b",
+      "tier": "strong",
+      "optional": true,
+      "model": "openai/gpt-oss-120b",
+      "api_key_env": "GROQ_API_KEY",
+      "base_url": "https://api.groq.com/openai/v1",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0.15,
+      "price_out": 0.6
+    },
+    {
+      "type": "openai",
+      "name": "groq / qwen3.8-27b",
+      "tier": "strong",
+      "optional": true,
+      "model": "qwen/qwen3.8-27b",
+      "api_key_env": "GROQ_API_KEY",
+      "base_url": "https://api.groq.com/openai/v1",
+      "max_tokens": 1024,
+      "timeout": 30,
+      "price_in": 0.8,
+      "price_out": 4.0
+    },
+    {
+      "type": "openai",
+      "name": "gemini / 3.8-flash",
+      "tier": "strong",
+      "optional": true,
+      "model": "gemini-3.8-flash",
+      "api_key_env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "max_tokens": 4096,
+      "timeout": 30,
+      "price_in": 0.75,
+      "price_out": 3.75
+    },
+    {
+      "type": "openai",
+      "name": "gemini / 3.5-flash-lite",
+      "tier": "cheap",
+      "optional": true,
+      "model": "gemini-3.5-flash-lite",
+      "api_key_env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "max_tokens": 4096,
+      "timeout": 30,
+      "price_in": 0.75,
+      "price_out": 3.75
+    }
+  ]
+}

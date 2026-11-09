@@ -36,11 +36,40 @@ class DashboardTests(unittest.TestCase):
         self.assertAlmostEqual(s["failure_rate"], 0.5)
         self.assertEqual(s["fallbacks"], 1)
         self.assertEqual(s["tokens"], 400)  # two successful calls x 200 tokens
-        self.assertEqual(s["p50"], 5.0)
+        self.assertEqual(s["p50"], 50.0)  # failed 5 ms attempts don't count
         by_provider = dashboard.group_by(rows, "provider")
         self.assertEqual(by_provider["cheap"]["calls"], 3)
         self.assertEqual(by_provider["strong"]["calls"], 1)
         self.assertEqual(set(dashboard.group_by(rows, "feature")), {"support", "extract"})
+
+    def test_request_level_numbers(self):
+        store = self.make_store()
+        rows = store.all_calls()
+        store.close()
+        r = dashboard.summarise_requests(rows)
+        self.assertEqual(r["requests"], 2)
+        self.assertEqual(r["served"], 2)
+        self.assertEqual(r["served_rate"], 1.0)
+        self.assertEqual(r["via_fallback"], 1)
+        # request one: 5 + 5 (failed) + 50 (strong) = 60; request two: 50
+        self.assertEqual(sorted([r["p50"], r["p95"]]), [50.0, 60.0])
+
+    def test_unserved_request_counts(self):
+        store = Store(":memory:")
+        gw = Gateway([ScriptedProvider("only", "cheap", [boom(), boom()])], store)
+        with self.assertRaises(Exception):
+            gw.ask("x")
+        r = dashboard.summarise_requests(store.all_calls())
+        store.close()
+        self.assertEqual((r["requests"], r["served"]), (1, 0))
+
+    def test_legacy_rows_without_request_id(self):
+        rows = [{"id": 1, "request_id": None, "ok": 1, "latency_ms": 10.0,
+                 "fallback_from": None, "cost": 0.0},
+                {"id": 2, "request_id": None, "ok": 0, "latency_ms": 5.0,
+                 "fallback_from": None, "cost": 0.0}]
+        r = dashboard.summarise_requests(rows)
+        self.assertEqual((r["requests"], r["served"]), (2, 1))
 
     def test_html_output(self):
         store = self.make_store()
@@ -54,7 +83,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("By provider", page)
         self.assertIn("By feature", page)
         self.assertIn("Recent failures", page)
-        self.assertIn("50.0%", page)
+        self.assertIn("50.0%", page)   # attempt failure rate
+        self.assertIn("100.0%", page)  # requests served
+        self.assertIn("end-to-end", page)
         self.assertIn("cheap", page)
         self.assertIn("support", page)
         self.assertIn("&lt;b&gt;down&lt;/b&gt;", page)  # escaped

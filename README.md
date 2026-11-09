@@ -13,7 +13,7 @@ It has three pieces that work together:
 Needs Python 3.10+. Run everything from the repo root.
 
 ```
-python -m unittest discover -s tests -t . -v     # 42 tests
+python -m unittest discover -s tests -t . -v     # 69 tests
 python -m llmgate demo                            # offline demo, writes demo_out/dashboard.html
 python -m llmgate eval                            # passes, exit 0
 python -m llmgate eval --config config.regressed.json   # score 1.0 -> 0.5, exit 1
@@ -29,6 +29,8 @@ The demo makes the cheap mock provider fail 35% of the time so you can see retri
 
 - **Tiers.** Every provider is `cheap` or `strong`. A request asks for a tier. Providers of that tier are tried first, cheapest first (input price plus output price), then the other tier.
 - **Retry and fallback.** Each provider gets one retry. If it still fails, the gateway moves to the next provider. Rate limits (429), missing keys and other 4xx errors skip the retry and fall back straight away. If every provider fails you get `AllProvidersFailed`.
+- **Timeouts.** A timeout is not retried: the provider already used its whole time budget, and a retry would double the caller's wait. Set `"timeout"` (seconds) per provider; the default is 30.
+- **Circuit breaker.** If a provider's last 3 attempts all failed and the latest failure is under 60 seconds old, the gateway skips it without calling it. After the cooldown it gets one trial request: success closes the breaker, failure reopens it. The state is read from the call log, so it works across processes (every `llmgate ask` is a new one). If every provider's breaker is open, they are all tried anyway. Tune it with `"circuit_breaker": {"threshold": 3, "cooldown_seconds": 60}` in the config, or `"threshold": null` to turn it off.
 - **Priority.** An optional `priority` per provider (lower first, default 0) beats price within a tier. Useful for a free local model that should only be a last resort.
 - **Budget.** Before every attempt the gateway checks today's logged spend (UTC day). At or over the budget it raises `BudgetExceeded`. It is a soft cap: the call that crosses the line still completes, because the cost is only known afterwards.
 - **Logging.** Every attempt, including failed ones, is a row in SQLite (`llmgate/store.py`): time, provider, ok, error, tokens, cost, latency, feature, and which provider it fell back from. Failed attempts cost 0.
@@ -36,9 +38,9 @@ The demo makes the cheap mock provider fail 35% of the time so you can see retri
 ### Providers (`llmgate/providers.py`)
 
 - `MockProvider`: canned answers, seeded random failures, simulated latency. Used by the tests, the demo and CI.
-- `AnthropicProvider` and `OpenAICompatProvider`: plain `urllib` calls. `OpenAICompatProvider` works with any OpenAI-style endpoint (OpenAI, Groq, Gemini's compatibility endpoint, Ollama). The tests run both real adapters against a local fake server, including 429 and 5xx responses. Neither has been run against the live APIs yet.
+- `AnthropicProvider` and `OpenAICompatProvider`: plain `urllib` calls. `OpenAICompatProvider` works with any OpenAI-style endpoint (OpenAI, Groq, Gemini's compatibility endpoint, Ollama). The tests run both real adapters against a local fake server, including 429, 5xx and timeout responses. `OpenAICompatProvider` has also served live traffic on Groq; Gemini's endpoint was reachable but only returned 503s during testing. `AnthropicProvider` has not been run against the live API yet.
 
-**These two real adapters have not been tested against live APIs.** Check them with a real key before you trust them. Prices are per 1M tokens and you must fill them in yourself from the provider's pricing page (`config.example.json`); the loader refuses to start with a missing price. The prices in `config.mock.json` are arbitrary numbers, not real ones.
+**Live testing so far is limited** (see above). Check an adapter with a real key before you trust it. Prices are per 1M tokens and you must fill them in yourself from the provider's pricing page (`config.example.json`); the loader refuses to start with a missing price. The prices in `config.mock.json` are arbitrary numbers, not real ones.
 
 ### Running on free tiers (no card)
 
@@ -85,7 +87,48 @@ python -m llmgate eval --update-baseline
 
 ### Dashboard (`llmgate/dashboard.py`)
 
-One self-contained HTML file with no JavaScript. "Calls" counts provider attempts, so a retry or a fallback is its own call. Latency percentiles use nearest-rank over all attempts that have a latency. Errors are HTML-escaped.
+One self-contained HTML file with no JavaScript. It shows the same log two ways:
+
+- **Requests**, what the caller experienced. One request is one call to the gateway, however many provider attempts it took. It counts as served if any attempt succeeded. End-to-end latency adds up all its attempts, so time lost on a timeout before a fallback shows up here.
+- **Provider attempts**, what each provider did. Every retry and fallback is its own attempt. Provider latency only counts successful attempts, so a provider that fails in 1 ms can't look fast.
+
+Percentiles are nearest-rank. Errors are HTML-escaped.
+
+### Why the breaker exists
+
+The first live run hit a real Gemini outage: every call returned 503 or timed out after 30 seconds. Every request was still served, because Groq took over, but each one first waited for Gemini to fail. With a retry on top, that was 60 seconds per request.
+
+Replaying that outage with mocks (10 strong requests, first provider down):
+
+| Setup | p50 end-to-end | p95 / worst |
+|---|---|---|
+| 30 s timeout, timeout retried, no breaker | 60.5 s | 60.5 s |
+| Timeouts not retried | 30.5 s | 30.5 s |
+| + circuit breaker | 0.5 s | 30.5 s |
+| + 10 s timeout on the flaky provider | 0.5 s | 10.5 s |
+
+The breaker fixes the typical request. The timeout bounds what the first few requests pay while the breaker is still learning.
+
+## Status board: free LLM APIs, measured
+
+`.github/workflows/status.yml` turns llmgate into a public status page for free-tier LLM APIs. Every 2 hours it sends one tiny request ("Reply with exactly one word: OK") to each provider in `config.status.json`, with no retries and no fallback, so it measures the provider and not the gateway. Results are appended to `probes.jsonl` on a separate `status-data` branch, and the page is published to GitHub Pages.
+
+The page shows, per provider: uptime over 24 hours, 7 days and 30 days, p50/p95 latency of successful probes, a strip of every check over the last week, and failures grouped by kind (rate limited, 5xx, timeout, auth, and so on). Raw data is published next to the page as `probes.jsonl`, so anyone can check the numbers.
+
+Run it locally:
+
+```
+python -m llmgate probe --config config.status.json --out status/probes.jsonl
+python -m llmgate status-page --data status/probes.jsonl --out site/index.html
+```
+
+Set it up on GitHub:
+
+1. Add repo secrets `GROQ_API_KEY` and `GEMINI_API_KEY` (Settings > Secrets and variables > Actions). Use keys made only for the board, so probes don't share quota with your own testing.
+2. Settings > Pages > Source: **GitHub Actions**.
+3. Actions > status > **Run workflow** for the first probe. After that it runs on its own.
+
+Limits worth knowing: this is free-tier traffic from GitHub-hosted runners, one probe per provider every 2 hours. It says nothing about paid tiers, and GitHub can delay or skip scheduled runs (those show as grey "no data" slots).
 
 ## Layout
 
@@ -97,7 +140,10 @@ config.mock.json    cheap-mock + strong-mock
 config.regressed.json   same, but cheap-mock answers two cases wrong
 config.example.json     real-provider template (prices and models to fill in)
 config.free.json        Groq + Gemini free tiers + local Ollama, OpenAI + Anthropic optional
-.github/workflows/eval.yml
+config.status.json      providers probed by the status board
+scripts/status-data.sh  keeps probe history on the status-data branch
+.github/workflows/eval.yml      unit tests + eval gate on pull requests
+.github/workflows/status.yml    probes every 2 hours, publishes the status page
 ```
 
 ## Phase 2: RAG (not built yet)
