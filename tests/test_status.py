@@ -105,6 +105,21 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("Least reliable: b (60.0%)", line)
 
 
+class HeadlineTieTests(unittest.TestCase):
+    def test_ties_are_named_together(self):
+        s = {n: {"up_7d": u, "probes_7d": 10}
+             for n, u in [("a", 1.0), ("b", 1.0), ("c", 0.5)]}
+        self.assertIn("Most reliable over the last 7 days: a, b (100.0%)",
+                      status.headline(s))
+
+    def test_big_tie_is_counted(self):
+        s = {n: {"up_7d": 1.0, "probes_7d": 10} for n in "abcd"}
+        s["z"] = {"up_7d": 0.0, "probes_7d": 10}
+        line = status.headline(s)
+        self.assertIn("4 providers (100.0%)", line)
+        self.assertIn("Least reliable: z (0.0%)", line)
+
+
 class PageTests(unittest.TestCase):
     def week(self):
         recs = []

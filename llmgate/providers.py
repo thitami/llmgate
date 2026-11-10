@@ -132,7 +132,10 @@ def _post_json(url, headers, body, timeout):
     start = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read()
+            status = resp.status
+            ctype = resp.headers.get("content-type", "")
+            final_url = resp.geturl()
     except urllib.error.HTTPError as exc:
         latency = (time.perf_counter() - start) * 1000
         detail = " ".join(exc.read().decode("utf-8", "replace").split())[:200]
@@ -153,7 +156,19 @@ def _post_json(url, headers, body, timeout):
         raise ProviderError(f"{type(exc).__name__}: {exc}", latency_ms=latency,
                             retryable=not timed_out,
                             kind="timeout" if timed_out else "network")
-    return payload, (time.perf_counter() - start) * 1000
+    latency = (time.perf_counter() - start) * 1000
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        # A 2xx that isn't JSON: say exactly what came back, so the cause
+        # (a redirect to a web page, an empty body, a proxy page) is visible.
+        # urllib turns a redirected POST into a GET, which often lands on HTML.
+        snippet = " ".join(raw[:150].decode("utf-8", "replace").split()) or "(empty body)"
+        moved = f", redirected to {final_url}" if final_url != url else ""
+        raise ProviderError(
+            f"HTTP {status} but not JSON (content-type {ctype or 'none'}{moved}): {snippet}",
+            latency_ms=latency, retryable=False, kind="bad_response", status=status)
+    return payload, latency
 
 
 class AnthropicProvider(Provider):

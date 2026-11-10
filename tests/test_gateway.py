@@ -16,6 +16,7 @@ class _FakeAPI(BaseHTTPRequestHandler):
     """Tiny local OpenAI-style server. Behaviour set by the class attribute."""
     status = 200
     delay = 0.0
+    html = False
     seen_auth = []
     seen_agent = []
 
@@ -30,6 +31,12 @@ class _FakeAPI(BaseHTTPRequestHandler):
             self.send_response(self.status)
             self.end_headers()
             self.wfile.write(b'{\n  "error": {\n    "message": "nope"\n  }\n}')
+            return
+        if self.html:
+            self.send_response(200)
+            self.send_header("content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<!DOCTYPE html><html><body>Sign in</body></html>")
             return
         if self.path.endswith("/v1/messages"):  # Anthropic shape
             type(self).seen_auth[-1] = self.headers.get("x-api-key")
@@ -331,6 +338,7 @@ class OpenAICompatHTTPTests(unittest.TestCase):
     def setUp(self):
         _FakeAPI.status = 200
         _FakeAPI.delay = 0.0
+        _FakeAPI.html = False
         _FakeAPI.seen_auth = []
         _FakeAPI.seen_agent = []
         self.server = HTTPServer(("127.0.0.1", 0), _FakeAPI)
@@ -361,6 +369,17 @@ class OpenAICompatHTTPTests(unittest.TestCase):
             self.provider().complete("ping")
         self.assertNotIn("\n", str(ctx.exception))
         self.assertIn('"message": "nope"', str(ctx.exception))
+
+    def test_success_status_with_html_body_says_what_came_back(self):
+        _FakeAPI.html = True
+        with self.assertRaises(ProviderError) as ctx:
+            self.provider().complete("ping")
+        msg = str(ctx.exception)
+        self.assertEqual(ctx.exception.kind, "bad_response")
+        self.assertFalse(ctx.exception.retryable)
+        self.assertIn("HTTP 200 but not JSON", msg)
+        self.assertIn("text/html", msg)
+        self.assertIn("<!DOCTYPE html>", msg)
 
     def test_timeout_is_not_retryable(self):
         _FakeAPI.delay = 0.5

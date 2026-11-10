@@ -180,17 +180,27 @@ def _uptime_cell(label, value, window_days, days_of_data):
 
 
 def headline(summaries):
-    """One sentence ranking providers by 7-day uptime, or '' if too little data."""
+    """One sentence ranking providers by 7-day uptime, or '' if too little data.
+
+    Ties are named together, so four models at 100% aren't reduced to the
+    one that happens to sort first.
+    """
     ranked = [(s["up_7d"], name) for name, s in summaries.items()
               if s["up_7d"] is not None and s["probes_7d"] >= 6]
     if len(ranked) < 2:
         return ""
-    ranked.sort(key=lambda x: (-x[0], x[1]))
-    (best, best_name), (worst, worst_name) = ranked[0], ranked[-1]
+    best = max(u for u, _ in ranked)
+    worst = min(u for u, _ in ranked)
     if best == worst:
-        return f"All providers at {best:.1%} uptime over the last 7 days."
-    return (f"Most reliable over the last 7 days: {best_name} ({best:.1%}). "
-            f"Least reliable: {worst_name} ({worst:.1%}).")
+        return f"All {len(ranked)} providers at {best:.1%} uptime over the last 7 days."
+
+    def names(value):
+        group = sorted(n for u, n in ranked if u == value)
+        if len(group) <= 3:
+            return ", ".join(group)
+        return f"{len(group)} providers"
+    return (f"Most reliable over the last 7 days: {names(best)} ({best:.1%}). "
+            f"Least reliable: {names(worst)} ({worst:.1%}).")
 
 
 def _badge(state, detail="", label=None):
