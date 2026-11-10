@@ -119,11 +119,19 @@ class MockProvider(Provider):
         return Response(text, estimate_tokens(prompt), estimate_tokens(text), latency)
 
 
-def _post_json(url, headers, body, timeout):
-    """POST JSON, return (parsed_json, latency_ms). Raises ProviderError."""
+PLAIN_TEXT = "__plain_text__"
+
+
+def _post_json(url, headers, body, timeout, allow_plain_text=False):
+    """POST JSON, return (parsed_json, latency_ms). Raises ProviderError.
+
+    allow_plain_text: a 2xx text/plain body is returned as {PLAIN_TEXT: body}
+    instead of failing. GitHub Models has answered that way in production.
+    """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("content-type", "application/json")
+    req.add_header("accept", "application/json")
     # Some providers sit behind Cloudflare, which rejects urllib's default
     # "Python-urllib/x.y" agent with HTTP 403 (error code 1010).
     req.add_header("user-agent", USER_AGENT)
@@ -157,6 +165,9 @@ def _post_json(url, headers, body, timeout):
                             retryable=not timed_out,
                             kind="timeout" if timed_out else "network")
     latency = (time.perf_counter() - start) * 1000
+    if (allow_plain_text and ctype.lower().startswith("text/plain")
+            and raw.strip()):
+        return {PLAIN_TEXT: raw.decode("utf-8", "replace").strip()}, latency
     try:
         payload = json.loads(raw.decode("utf-8"))
     except ValueError:
@@ -208,7 +219,8 @@ class AnthropicProvider(Provider):
 
 
 class OpenAICompatProvider(Provider):
-    """Any OpenAI-style /chat/completions endpoint. Untested against live APIs."""
+    """Any OpenAI-style /chat/completions endpoint (OpenAI, Groq, Gemini's
+    compatibility endpoint, GitHub Models, OpenRouter, Ollama)."""
 
     def __init__(self, name, tier, price_in, price_out, model, api_key_env,
                  base_url="https://api.openai.com/v1", max_tokens=1024, timeout=30, priority=0):
@@ -235,8 +247,12 @@ class OpenAICompatProvider(Provider):
         body = {"model": self.model, "messages": messages,
                 "max_tokens": self.max_tokens}
         payload, latency = _post_json(f"{self.base_url}/chat/completions", headers,
-                                      body, self.timeout)
+                                      body, self.timeout, allow_plain_text=True)
         try:
+            if PLAIN_TEXT in payload:  # answer sent as text/plain: no usage block
+                text = payload[PLAIN_TEXT]
+                return Response(text, estimate_tokens(prompt), estimate_tokens(text),
+                                latency)
             text = payload["choices"][0]["message"]["content"] or ""
             usage = payload["usage"]
             return Response(text, int(usage["prompt_tokens"]),

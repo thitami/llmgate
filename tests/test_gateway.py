@@ -17,6 +17,8 @@ class _FakeAPI(BaseHTTPRequestHandler):
     status = 200
     delay = 0.0
     html = False
+    plain = False
+    seen_accept = []
     seen_auth = []
     seen_agent = []
 
@@ -31,6 +33,13 @@ class _FakeAPI(BaseHTTPRequestHandler):
             self.send_response(self.status)
             self.end_headers()
             self.wfile.write(b'{\n  "error": {\n    "message": "nope"\n  }\n}')
+            return
+        type(self).seen_accept.append(self.headers.get("accept"))
+        if self.plain:
+            self.send_response(200)
+            self.send_header("content-type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"OK")
             return
         if self.html:
             self.send_response(200)
@@ -339,6 +348,8 @@ class OpenAICompatHTTPTests(unittest.TestCase):
         _FakeAPI.status = 200
         _FakeAPI.delay = 0.0
         _FakeAPI.html = False
+        _FakeAPI.plain = False
+        _FakeAPI.seen_accept = []
         _FakeAPI.seen_auth = []
         _FakeAPI.seen_agent = []
         self.server = HTTPServer(("127.0.0.1", 0), _FakeAPI)
@@ -369,6 +380,14 @@ class OpenAICompatHTTPTests(unittest.TestCase):
             self.provider().complete("ping")
         self.assertNotIn("\n", str(ctx.exception))
         self.assertIn('"message": "nope"', str(ctx.exception))
+
+    def test_plain_text_answer_is_accepted(self):
+        # GitHub Models answered 200 text/plain "OK" in production
+        _FakeAPI.plain = True
+        resp = self.provider().complete("Reply with exactly one word: OK")
+        self.assertEqual(resp.text, "OK")
+        self.assertGreater(resp.tokens_in, 0)
+        self.assertEqual(_FakeAPI.seen_accept, ["application/json"])
 
     def test_success_status_with_html_body_says_what_came_back(self):
         _FakeAPI.html = True
