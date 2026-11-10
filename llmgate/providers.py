@@ -23,7 +23,7 @@ USER_AGENT = f"llmgate/{__version__} (+https://github.com/thitami/llmgate)"
 
 
 ERROR_KINDS = ("rate_limited", "server_error", "timeout", "network", "auth",
-               "client_error", "bad_response", "config", "error")
+               "client_error", "bad_response", "wrong_answer", "config", "error")
 
 
 class ProviderError(Exception):

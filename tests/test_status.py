@@ -22,18 +22,31 @@ def rec(provider, t, ok=True, kind=None, latency=500.0, correct=True):
 
 class ProbeTests(unittest.TestCase):
     def test_success_record(self):
-        p = ScriptedProvider("p", "cheap", ["OK."])
+        p = ScriptedProvider("p", "cheap", ["42"])
         r = status.probe_one(p, clock=lambda: NOW)
         self.assertTrue(r["ok"])
         self.assertTrue(r["correct"])
+        self.assertEqual(r["answer"], "42")
+        self.assertEqual(r["prompt"], status.PROBE_PROMPT)
         self.assertEqual(r["ts"], status._iso(NOW))
         self.assertIsNone(r["kind"])
 
-    def test_wrong_answer_is_up_but_flagged(self):
-        p = ScriptedProvider("p", "cheap", ["Sure! Here's a poem about tokens."])
+    def test_answer_in_a_sentence_still_counts(self):
+        p = ScriptedProvider("p", "cheap", ["The answer is 42."])
+        self.assertTrue(status.probe_one(p, clock=lambda: NOW)["ok"])
+
+    def test_plain_ok_is_not_a_working_model(self):
+        # the case that slipped through: a server answering "OK" to anything
+        p = ScriptedProvider("p", "cheap", ["OK"])
         r = status.probe_one(p, clock=lambda: NOW)
-        self.assertTrue(r["ok"])
-        self.assertFalse(r["correct"])  # "tokens" must not match "ok"
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["kind"], "wrong_answer")
+        self.assertIn("'OK'", r["error"])
+
+    def test_near_misses_are_wrong(self):
+        for text in ("420", "142", "4 2", ""):
+            r = status.probe_one(ScriptedProvider("p", "cheap", [text]), clock=lambda: NOW)
+            self.assertFalse(r["ok"], text)
 
     def test_failure_record_keeps_kind_and_status(self):
         err = ProviderError("rate limited (HTTP 429): slow down", latency_ms=12.0,
@@ -45,7 +58,7 @@ class ProbeTests(unittest.TestCase):
                          ("rate_limited", 429, 12.0))
 
     def test_probe_all_appends_jsonl_one_attempt_each(self):
-        a = ScriptedProvider("a", "cheap", ["OK"])
+        a = ScriptedProvider("a", "cheap", ["42"])
         b = ScriptedProvider("b", "strong", [ProviderError("down", kind="server_error")])
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "probes.jsonl")

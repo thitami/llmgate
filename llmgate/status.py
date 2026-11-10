@@ -19,8 +19,11 @@ from .dashboard import CSS as DASHBOARD_CSS
 from .dashboard import percentile
 from .providers import ProviderError
 
-PROBE_PROMPT = "Reply with exactly one word: OK"
-OK_PATTERN = re.compile(r"\bok\b", re.IGNORECASE)
+# The expected answer must be something a server could not return by
+# accident. An earlier "Reply with exactly one word: OK" probe was passed by a
+# plain-text "OK" that arrived in under 100 ms: possibly a server, not a model.
+PROBE_PROMPT = "What is 17 + 25? Reply with only the number."
+EXPECTED = re.compile(r"(?<!\d)42(?!\d)")
 
 # Status colours (good / warning / critical) always ship with a symbol and a
 # label, never colour alone.
@@ -39,6 +42,7 @@ KIND_LABELS = {
     "auth": "auth / forbidden",
     "client_error": "client error (4xx)",
     "bad_response": "bad response",
+    "wrong_answer": "wrong answer",
     "config": "config",
     "error": "error",
 }
@@ -54,7 +58,8 @@ def probe_one(provider, clock=time.time):
     record = {"ts": _iso(ts), "t": ts, "provider": provider.name,
               "model": getattr(provider, "model", "mock"), "ok": False,
               "kind": None, "status": None, "latency_ms": None,
-              "tokens_in": 0, "tokens_out": 0, "correct": None, "error": None}
+              "tokens_in": 0, "tokens_out": 0, "correct": None, "error": None,
+              "prompt": PROBE_PROMPT}
     try:
         resp = provider.complete(PROBE_PROMPT)
     except ProviderError as exc:
@@ -62,9 +67,17 @@ def probe_one(provider, clock=time.time):
                       status=getattr(exc, "status", None),
                       latency_ms=exc.latency_ms, error=str(exc)[:200])
         return record
-    record.update(ok=True, latency_ms=resp.latency_ms, tokens_in=resp.tokens_in,
-                  tokens_out=resp.tokens_out,
-                  correct=bool(OK_PATTERN.search(resp.text or "")))
+    text = (resp.text or "").strip()
+    correct = bool(EXPECTED.search(text))
+    record.update(latency_ms=resp.latency_ms, tokens_in=resp.tokens_in,
+                  tokens_out=resp.tokens_out, correct=correct,
+                  answer=" ".join(text.split())[:80])
+    if correct:
+        record["ok"] = True
+    else:
+        # Something answered, but not the question: not a working model.
+        record.update(ok=False, kind="wrong_answer",
+                      error=f"wrong answer: {' '.join(text.split())[:80]!r}")
     return record
 
 
@@ -117,7 +130,6 @@ def provider_summary(records, now):
     for r in week:
         if not r["ok"]:
             kinds[r["kind"] or "error"] = kinds.get(r["kind"] or "error", 0) + 1
-    answered = [r for r in week if r["ok"] and r["correct"] is not None]
     first = records[0]["t"] if records else now
     return {
         "days_of_data": (now - first) / 86400,
@@ -129,7 +141,6 @@ def provider_summary(records, now):
         "p95": percentile(lat, 95),
         "probes_7d": len(week),
         "kinds_7d": dict(sorted(kinds.items(), key=lambda kv: -kv[1])),
-        "wrong_7d": sum(1 for r in answered if not r["correct"]),
     }
 
 
@@ -282,7 +293,6 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
             for start, rs in slots)
         kinds = ", ".join(f"{KIND_LABELS.get(k, k)} {n}"
                           for k, n in s["kinds_7d"].items()) or "none"
-        wrong = (f" Answered but wrong: {s['wrong_7d']}." if s["wrong_7d"] else "")
         summaries[name] = s
         d = s["days_of_data"]
         nums = (_uptime_cell("Uptime 24h", s["up_24h"], 1, d)
@@ -305,7 +315,7 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
             f' over the last {days} days">{cells}</div>'
             f'<div class="axis"><span>{days} days ago</span><span>now</span></div>'
             f'<div class="kinds">Failures in the last 7 days: {html.escape(kinds)}.'
-            f'{html.escape(wrong)}</div></section>')
+            '</div></section>')
     if not cards:
         cards.append('<p class="muted">No probes recorded yet.</p>')
 

@@ -13,7 +13,7 @@ It has three pieces that work together:
 Needs Python 3.10+. Run everything from the repo root.
 
 ```
-python -m unittest discover -s tests -t . -v     # 87 tests
+python -m unittest discover -s tests -t . -v     # 93 tests
 python -m llmgate demo                            # offline demo, writes demo_out/dashboard.html
 python -m llmgate eval                            # passes, exit 0
 python -m llmgate eval --config config.regressed.json   # score 1.0 -> 0.5, exit 1
@@ -111,7 +111,7 @@ The breaker fixes the typical request. The timeout bounds what the first few req
 
 ## Status board: free LLM APIs, measured
 
-`.github/workflows/status.yml` turns llmgate into a public status page for free-tier LLM APIs. Every 2 hours it sends one tiny request ("Reply with exactly one word: OK") to each provider in `config.status.json`, with no retries and no fallback, so it measures the provider and not the gateway. Results are appended to `probes.jsonl` on a separate `status-data` branch, and the page is published to GitHub Pages.
+`.github/workflows/status.yml` turns llmgate into a public status page for free-tier LLM APIs. Every 2 hours it sends one tiny request ("What is 17 + 25? Reply with only the number.") to each provider in `config.status.json`, with no retries and no fallback, so it measures the provider and not the gateway. A probe counts as up only if the reply contains 42. The first version asked models to reply "OK", and a plain-text "OK" arriving in under 100 ms passed it; a check that a non-answer can pass isn't a check. Results are appended to `probes.jsonl` on a separate `status-data` branch, and the page is published to GitHub Pages.
 
 The page shows, per provider: uptime over 24 hours, 7 days and 30 days, p50/p95 latency of successful probes, a strip of every check over the last week, and failures grouped by kind (rate limited, 5xx, timeout, auth, and so on). Raw data is published next to the page as `probes.jsonl`, so anyone can check the numbers.
 

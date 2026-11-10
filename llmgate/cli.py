@@ -154,7 +154,7 @@ def cmd_probe(args):
         os.makedirs(out_dir, exist_ok=True)
     for r in status.probe_all(providers, args.out):
         if r["ok"]:
-            note = f"ok {r['latency_ms']:.0f} ms" + ("" if r["correct"] else ", wrong answer")
+            note = f"ok {r['latency_ms']:.0f} ms, answered {r.get('answer', '')!r}"
         else:
             note = f"FAILED {r['kind']}: {r['error']}"
         print(f"{r['provider']:<24} {note}")
