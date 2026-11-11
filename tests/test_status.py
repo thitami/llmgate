@@ -133,6 +133,37 @@ class HeadlineTieTests(unittest.TestCase):
         self.assertIn("Least reliable: z (0.0%)", line)
 
 
+class RemovedProviderTests(unittest.TestCase):
+    def test_removed_provider_leaves_page_and_incidents_but_not_raw_data(self):
+        live = [rec("groq / x", NOW - i * STEP_) for i in range(6)]
+        gone = [rec("github / y", NOW - i * STEP_, ok=False, kind="wrong_answer")
+                for i in range(6)]
+        with tempfile.TemporaryDirectory() as tmp:
+            data = os.path.join(tmp, "probes.jsonl")
+            with open(data, "w") as fh:
+                fh.writelines(json.dumps(r) + "\n" for r in live + gone)
+            out = os.path.join(tmp, "site")
+            n = status.write_site(data, out, now=NOW, providers=["groq / x"])
+            with open(os.path.join(out, "index.html")) as fh:
+                page = fh.read()
+            with open(os.path.join(out, "status.json")) as fh:
+                st = json.load(fh)
+            with open(os.path.join(out, "probes.jsonl")) as fh:
+                raw = fh.read()
+        self.assertEqual(n, 12)                 # raw history keeps everything
+        self.assertIn("github / y", raw)
+        self.assertNotIn("github / y", page)    # page shows only live providers
+        self.assertEqual(list(st["providers"]), ["groq / x"])
+        self.assertEqual(st["incidents"], [])
+
+    def test_no_filter_keeps_everything(self):
+        recs = [rec("a", NOW), rec("b", NOW)]
+        self.assertEqual(status.only_providers(recs, None), recs)
+
+
+STEP_ = 2 * HOUR
+
+
 class PageTests(unittest.TestCase):
     def week(self):
         recs = []
@@ -174,11 +205,9 @@ class StatusConfigTests(unittest.TestCase):
         keys = {p["api_key_env"]: "x" for p in cfg["providers"]}
         built = build_providers(cfg["providers"], environ=keys)
         self.assertEqual(len(built), len(cfg["providers"]))
-        # GitHub Models runs on the workflow's own token, no extra secret
-        self.assertIn("GITHUB_TOKEN", keys)
-        # only GitHub Models with the built-in token: 2 providers on, rest skipped
-        self.assertEqual(len(build_providers(cfg["providers"],
-                                             environ={"GITHUB_TOKEN": "t"})), 2)
+        # GitHub Models was retired on 30 July 2026: it must stay off the board
+        self.assertFalse(any("models.github.ai" in p.get("base_url", "")
+                             for p in cfg["providers"]))
 
 
 if __name__ == "__main__":

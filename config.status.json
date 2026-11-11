@@ -1,5 +1,5 @@
 {
-  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped until its key is set (a GitHub Actions secret, or exported locally). GitHub Models uses the workflow's built-in GITHUB_TOKEN (permission models: read), so it needs no secret. Gemma 4 31B is probed twice on purpose: direct from Google and through OpenRouter, to see what the middleman adds. OpenRouter's :free list changes often; check the IDs still exist (GET https://openrouter.ai/api/v1/models). Prices are unused by the probe but required by the loader; Gemini and Groq values are list prices.",
+  "_note": "Providers probed by the status board. Each gets one request per run, no retries. All are optional: a provider is skipped until its key is set (a GitHub Actions secret, or exported locally). GitHub Models was removed: GitHub retired it on 30 July 2026, and its old endpoint answers every request with a plain-text 200 OK. Gemma 4 31B is probed twice on purpose: direct from Google and through OpenRouter, to see what the middleman adds. OpenRouter's :free list changes often; check the IDs still exist (GET https://openrouter.ai/api/v1/models). Prices are unused by the probe but required by the loader; Gemini and Groq values are list prices. max_tokens is kept low where a provider counts it against a per-minute output limit (Groq's qwen).",
   "providers": [
     {
       "type": "openai",
@@ -35,7 +35,7 @@
       "model": "qwen/qwen3.8-27b",
       "api_key_env": "GROQ_API_KEY",
       "base_url": "https://api.groq.com/openai/v1",
-      "max_tokens": 1024,
+      "max_tokens": 256,
       "timeout": 30,
       "price_in": 0.8,
       "price_out": 4.0
@@ -65,32 +65,6 @@
       "timeout": 30,
       "price_in": 0.75,
       "price_out": 3.75
-    },
-    {
-      "type": "openai",
-      "name": "github / gpt-4.1-mini",
-      "tier": "cheap",
-      "optional": true,
-      "model": "openai/gpt-4.1-mini",
-      "api_key_env": "GITHUB_TOKEN",
-      "base_url": "https://models.github.ai/inference",
-      "max_tokens": 1024,
-      "timeout": 30,
-      "price_in": 0,
-      "price_out": 0
-    },
-    {
-      "type": "openai",
-      "name": "github / gpt-4.1",
-      "tier": "strong",
-      "optional": true,
-      "model": "openai/gpt-4.1",
-      "api_key_env": "GITHUB_TOKEN",
-      "base_url": "https://models.github.ai/inference",
-      "max_tokens": 1024,
-      "timeout": 30,
-      "price_in": 0,
-      "price_out": 0
     },
     {
       "type": "openai",

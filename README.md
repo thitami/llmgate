@@ -13,7 +13,7 @@ It has three pieces that work together:
 Needs Python 3.10+. Run everything from the repo root.
 
 ```
-python -m unittest discover -s tests -t . -v     # 93 tests
+python -m unittest discover -s tests -t . -v     # 95 tests
 python -m llmgate demo                            # offline demo, writes demo_out/dashboard.html
 python -m llmgate eval                            # passes, exit 0
 python -m llmgate eval --config config.regressed.json   # score 1.0 -> 0.5, exit 1
@@ -111,7 +111,7 @@ The breaker fixes the typical request. The timeout bounds what the first few req
 
 ## Status board: free LLM APIs, measured
 
-`.github/workflows/status.yml` turns llmgate into a public status page for free-tier LLM APIs. Every 2 hours it sends one tiny request ("What is 17 + 25? Reply with only the number.") to each provider in `config.status.json`, with no retries and no fallback, so it measures the provider and not the gateway. A probe counts as up only if the reply contains 42. The first version asked models to reply "OK", and a plain-text "OK" arriving in under 100 ms passed it; a check that a non-answer can pass isn't a check. Results are appended to `probes.jsonl` on a separate `status-data` branch, and the page is published to GitHub Pages.
+`.github/workflows/status.yml` turns llmgate into a public status page for free-tier LLM APIs. Every 2 hours it sends one tiny request ("What is 17 + 25? Reply with only the number.") to each provider in `config.status.json`, with no retries and no fallback, so it measures the provider and not the gateway. A probe counts as up only if the reply contains 42. The first version asked models to reply "OK", and a plain-text "OK" arriving in under 100 ms passed it; a check that a non-answer can pass isn't a check. That "OK" turned out to be GitHub Models: GitHub retired it on 30 July 2026, and its old endpoint now answers every request with a plain-text 200 OK. It has been removed from the board; its probes stay in the raw data. Results are appended to `probes.jsonl` on a separate `status-data` branch, and the page is published to GitHub Pages.
 
 The page shows, per provider: uptime over 24 hours, 7 days and 30 days, p50/p95 latency of successful probes, a strip of every check over the last week, and failures grouped by kind (rate limited, 5xx, timeout, auth, and so on). Raw data is published next to the page as `probes.jsonl`, so anyone can check the numbers.
 
@@ -131,7 +131,7 @@ python -m llmgate incidents-sync --data status/probes.jsonl --repo you/llmgate -
 
 Set it up on GitHub:
 
-1. Add repo secrets for the providers you want (Settings > Secrets and variables > Actions): `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`. Each provider stays off until its secret exists. GitHub Models needs no secret: the workflow's `models: read` permission lets the built-in token call it. Use keys made only for the board, so probes don't share quota with your own testing.
+1. Add repo secrets for the providers you want (Settings > Secrets and variables > Actions): `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`. Each provider stays off until its secret exists. Use keys made only for the board, so probes don't share quota with your own testing.
 2. Settings > Pages > Source: **GitHub Actions**.
 3. Actions > status > **Run workflow** for the first probe. After that it runs on its own.
 

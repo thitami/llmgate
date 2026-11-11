@@ -2,8 +2,7 @@ name: status
 
 # Probes each free-tier provider every 2 hours and publishes the status page
 # to GitHub Pages. Needs: Settings > Pages > Source set to "GitHub Actions".
-# GitHub Models works with the built-in token. Other providers switch on when
-# their secret exists: GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY.
+# Each provider switches on when its secret exists: GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY.
 
 on:
   schedule:
@@ -13,7 +12,6 @@ on:
 permissions:
   contents: write   # push probe history to the status-data branch
   issues: write     # open and close incident issues
-  models: read      # lets GITHUB_TOKEN call GitHub Models (free, no secret needed)
   pages: write
   id-token: write
 
@@ -43,7 +41,6 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -m llmgate probe --config config.status.json --out "$RUNNER_TEMP/status-data/probes.jsonl"
 
       - name: Save probe history
@@ -56,12 +53,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python -m llmgate incidents-sync --data "$RUNNER_TEMP/status-data/probes.jsonl" \
+            --config config.status.json \
             --repo "${{ github.repository }}" \
             --page-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
 
       - name: Build status site
         run: |
           python -m llmgate status-page --data "$RUNNER_TEMP/status-data/probes.jsonl" --out-dir site \
+            --config config.status.json \
             --repo-url "${{ github.server_url }}/${{ github.repository }}" \
             --site-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
 

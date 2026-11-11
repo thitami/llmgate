@@ -356,10 +356,9 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
         f"request to each provider: “{html.escape(PROBE_PROMPT)}”.</li>"
         "<li>One attempt per provider, no retries, no fallback. Uptime is "
         "successful probes divided by all probes in the window.</li>"
-        "<li>All providers are on their free tier (GitHub Models: its free "
-        "usage allowance). Free tiers have lower rate limits and may get lower "
-        "priority than paid traffic, so these numbers say nothing about paid "
-        "tiers.</li>"
+        "<li>All providers are on their free tier. Free tiers have lower rate "
+        "limits and may get lower priority than paid traffic, so these numbers "
+        "say nothing about paid tiers.</li>"
         "<li>Gemma 4 31B is probed twice: direct from Google and through "
         "OpenRouter. Same model, two routes, so the difference is what the "
         "middleman adds.</li>"
@@ -368,7 +367,7 @@ def render(records, now=None, title="Free LLM API status", repo_url=None,
         "GitHub; a grey bar means no probe ran.</li>"
         "<li>Rate limited (HTTP 429) is shown separately from down, but still "
         "counts against uptime: the request was not served.</li>"
-        "<li>Latency is time to a complete response for a one-word answer, "
+        "<li>Latency is time to a complete response for a short answer, "
         "successful probes only.</li>"
         "</ul></main></body></html>")
 
@@ -414,11 +413,24 @@ def _follow_section(summaries, site_url, repo_url):
             + "".join(f"<li>{l}</li>" for l in links) + "</ul>" + badge_html)
 
 
+def only_providers(records, names):
+    """Keep records of providers still being probed (names=None keeps all).
+
+    Probes of a removed provider stay in probes.jsonl, the raw history, but no
+    longer appear on the page or keep an incident open forever.
+    """
+    if names is None:
+        return records
+    names = set(names)
+    return [r for r in records if r["provider"] in names]
+
+
 def write_site(data_path, out_dir, title="Free LLM API status", repo_url=None,
-               site_url=None, slot_hours=2, now=None):
+               site_url=None, slot_hours=2, now=None, providers=None):
     """Write index.html, status.json, feed.xml, badges/*.json and probes.jsonl."""
     now = time.time() if now is None else now
-    records = load_records(data_path) if os.path.exists(data_path) else []
+    all_records = load_records(data_path) if os.path.exists(data_path) else []
+    records = only_providers(all_records, providers)
     os.makedirs(os.path.join(out_dir, "badges"), exist_ok=True)
     page = render(records, now=now, title=title, repo_url=repo_url,
                   slot_hours=slot_hours, site_url=site_url)
@@ -439,10 +451,10 @@ def write_site(data_path, out_dir, title="Free LLM API status", repo_url=None,
         fh.write(inc.atom_feed(found, now, site_url, title, KIND_LABELS))
     src = os.path.abspath(data_path)
     dst = os.path.abspath(os.path.join(out_dir, "probes.jsonl"))
-    if records and src != dst:
+    if all_records and src != dst:
         with open(src, encoding="utf-8") as a, open(dst, "w", encoding="utf-8") as b:
             b.write(a.read())
-    return len(records)
+    return len(all_records)
 
 
 def write_page(data_path, out_path, **kw):

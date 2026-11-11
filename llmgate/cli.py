@@ -168,7 +168,8 @@ def cmd_status_page(args):
               file=sys.stderr)
     n = status.write_site(args.data, args.out_dir, title=args.title,
                           repo_url=args.repo_url, site_url=args.site_url,
-                          slot_hours=args.slot_hours)
+                          slot_hours=args.slot_hours,
+                          providers=_probed_names(args.config))
     print(f"status site from {n} probes written to {args.out_dir}/ "
           "(index.html, status.json, feed.xml, badges/)")
     return 0
@@ -177,6 +178,7 @@ def cmd_status_page(args):
 def cmd_incidents_sync(args):
     from . import github_issues, incidents
     records = status.load_records(args.data) if os.path.exists(args.data) else []
+    records = status.only_providers(records, _probed_names(args.config))
     found = incidents.find_incidents(records)
     if args.dry_run:
         client = _DryRunClient()
@@ -192,6 +194,14 @@ def cmd_incidents_sync(args):
         print(f"github error: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _probed_names(config_path):
+    """Provider names in a status config, or None (keep everything) if no config."""
+    if not config_path:
+        return None
+    cfg = load_config(config_path)
+    return [p["name"] for p in cfg.get("providers", [])]
 
 
 class _DryRunClient:
@@ -297,6 +307,8 @@ def build_parser():
     sp.add_argument("--site-url", default=None,
                     help="public URL of the site, for feed and badge links")
     sp.add_argument("--slot-hours", type=int, default=2)
+    sp.add_argument("--config", default=None,
+                    help="status config: show only providers still probed")
     sp.set_defaults(func=cmd_status_page)
 
     ins = sub.add_parser("incidents-sync",
@@ -305,6 +317,8 @@ def build_parser():
     ins.add_argument("--repo", required=True, help="owner/name")
     ins.add_argument("--page-url", default=None)
     ins.add_argument("--token-env", default="GITHUB_TOKEN")
+    ins.add_argument("--config", default=None,
+                     help="status config: ignore providers no longer probed")
     ins.add_argument("--dry-run", action="store_true",
                      help="print what would be opened, call nothing")
     ins.set_defaults(func=cmd_incidents_sync)

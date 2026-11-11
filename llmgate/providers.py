@@ -126,7 +126,9 @@ def _post_json(url, headers, body, timeout, allow_plain_text=False):
     """POST JSON, return (parsed_json, latency_ms). Raises ProviderError.
 
     allow_plain_text: a 2xx text/plain body is returned as {PLAIN_TEXT: body}
-    instead of failing. GitHub Models has answered that way in production.
+    instead of failing. Some endpoints answer that way; the status board's
+    probe still checks the answer, which is how a retired endpoint returning a
+    bare "OK" was caught.
     """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
@@ -220,7 +222,7 @@ class AnthropicProvider(Provider):
 
 class OpenAICompatProvider(Provider):
     """Any OpenAI-style /chat/completions endpoint (OpenAI, Groq, Gemini's
-    compatibility endpoint, GitHub Models, OpenRouter, Ollama)."""
+    compatibility endpoint, OpenRouter, Ollama)."""
 
     def __init__(self, name, tier, price_in, price_out, model, api_key_env,
                  base_url="https://api.openai.com/v1", max_tokens=1024, timeout=30, priority=0):
