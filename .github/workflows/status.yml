@@ -5,8 +5,6 @@ name: status
 # Each provider switches on when its secret exists: GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY.
 
 on:
-  schedule:
-    - cron: "17 */2 * * *"   # minute 17 avoids the top-of-hour rush on Actions
   workflow_dispatch:          # "Run workflow" button for a manual probe
 
 permissions:
