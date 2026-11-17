@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.db
+demo_out/
+dashboard.html
+site/
+status/
+.idea/
